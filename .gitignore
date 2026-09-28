@@ -15,3 +15,15 @@ runtime/local/
 *.key
 *.cer
 .DS_Store
+*.npz
+*.pt
+*.pth
+*.ckpt
+private_data/
+release_local/
+# Build output and local runtime
+runtime/mitmproxy/
+release/
+build/pyinstaller/
+
+Guance.spec

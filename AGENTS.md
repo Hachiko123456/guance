@@ -6,8 +6,8 @@ Guance is a Windows 10/11 desktop application for local Daguandan state capture,
 
 ## Ownership for this implementation batch
 
-- Lead: project composition, public docs, pyproject, integration, packaging integration, GitHub push.
-- Core worker: `src/guance/domain/**`, `src/guance/application/model/**`, `src/guance/ports/model.py`, `tests/domain/**`, `tests/model/**`.
+- Lead: contracts, model integration (`src/guance/infrastructure/model/**`), project composition, public docs, pyproject, integration, packaging, GitHub push.
+- Core worker: `src/guance/domain/**`, `src/guance/infrastructure/protocol/**`, `tests/domain/**`, `tests/protocol/**`.
 - Runtime worker: `src/guance/infrastructure/capture/**`, `src/guance/infrastructure/windows/**`, `src/guance/application/runtime/**`, `src/guance/ports/capture.py`, `tests/runtime/**`.
 - GUI worker: `src/guance/presentation/**`, `src/guance/presentation/qml/**`, `tests/presentation/**`.
 
