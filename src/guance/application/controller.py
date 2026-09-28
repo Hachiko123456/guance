@@ -31,6 +31,7 @@ class GuanceController:
         self.session = SessionEngine("desktop")
         self._lock = threading.RLock()
         self._runtime: RuntimeService | None = None
+        self._operation_lock = threading.Lock()
         self._model = InferenceClient(default_model_path(self.paths), on_result=self._on_advice,
                                       on_status=self._on_model_status, threads=2)
         self._attach_signals()
@@ -42,6 +43,7 @@ class GuanceController:
         self.viewmodel.repairRequested.connect(self.repair)
         self.viewmodel.removeCertificateRequested.connect(self.remove_certificate)
         self.viewmodel.exportDiagnosticsRequested.connect(self.export_diagnostics)
+        self.viewmodel.modelImportRequested.connect(self.import_model)
 
     def _mode_options(self) -> RuntimeOptions:
         helper = self.paths["runtime_dir"] / "mitmproxy" / "mitmdump.exe"
@@ -117,35 +119,55 @@ class GuanceController:
         if not consent:
             self._status({"phase":"idle","busy":False,"title":"尚未连接","detail":"未授权，网络设置没有修改。"})
             return
+        self._run_async("certificate", self._authorize_impl, consent)
+
+    def _authorize_impl(self, consent: bool) -> None:
+        self._status({"phase":"preparing","busy":True,"title":"正在准备","detail":"正在准备本机网络组件，请稍候。"})
         try:
             self._ensure_certificate_material()
             if self._runtime is None:
                 self._runtime=self._build_runtime()
-            result=self._runtime.prepare_certificate(True)
+            result=self._runtime.prepare_certificate(bool(consent))
             if not result.get("ok"):
                 self._status({"phase":"error","busy":False,"error_message":result.get("message","证书初始化失败"),"detail":"本机网络组件未准备完成。"})
                 return
-            self.start()
+            self._start_impl()
         except Exception as exc:
             self.log.write("certificate_prepare_failed", level="ERROR", message=type(exc).__name__)
             self._status({"phase":"error","busy":False,"error_message":"网络组件初始化失败","detail":"请打开诊断查看处理建议。"})
-
     def start(self) -> None:
+        self._run_async("start", self._start_impl)
+
+    def _start_impl(self) -> None:
+        self._status({"phase":"preparing","busy":True,"title":"正在准备","detail":"正在启动对局采集。"})
         try:
             if self._runtime is None:self._runtime=self._build_runtime()
             result=self._runtime.start()
             if result.get("ok"):
                 self._model.start()
-                self._status({"phase":"waiting","running":True,"connected":True,"busy":False,"network_mode":result.get("mode","direct"),"detail":"采集已启动，请进入大掼蛋对局。"})
+                self._status({"phase":"waiting","running":True,"connected":True,"busy":False,"network_mode":result.get("mode","direct"),"detail":"采集已启动，请重新打开大掼蛋。"})
             else:
                 self._status({"phase":"error","running":False,"connected":False,"busy":False,"error_message":result.get("message","采集启动失败"),"detail":"当前无法安全启动采集。"})
         except Exception as exc:
             self.log.write("runtime_start_failed", level="ERROR", message=type(exc).__name__)
             self._status({"phase":"error","running":False,"connected":False,"busy":False,"error_message":"采集服务启动失败","detail":"请打开诊断。"})
-
     def stop(self) -> None:
+        self._run_async("stop", self._stop_impl)
+
+    def _stop_impl(self) -> None:
         if self._runtime is not None:self._runtime.stop()
         self._model.invalidate();self._model.close();self._status({"phase":"stopped","running":False,"connected":False,"busy":False})
+
+    def _run_async(self, operation: str, callback, *args) -> None:
+        if not self._operation_lock.acquire(blocking=False):
+            self._status({"phase":"error","busy":False,"error_message":"已有操作正在执行","detail":"请稍候再试。"})
+            return
+        def runner() -> None:
+            try:
+                callback(*args)
+            finally:
+                self._operation_lock.release()
+        threading.Thread(target=runner, name=f"guance-{operation}", daemon=True).start()
 
     def repair(self) -> None:
         result=self._runtime.repair() if self._runtime else {"ok":True}
@@ -154,6 +176,20 @@ class GuanceController:
     def remove_certificate(self, consent: bool) -> None:
         result=self._runtime.remove_certificate(consent) if self._runtime else {"ok":False,"message":"助手尚未初始化"}
         self._status({"phase":"idle","detail":result.get("message","证书处理完成"),"certificate_state":"missing" if result.get("ok") else "error"})
+
+    def import_model(self, path: str) -> None:
+        candidate=Path(path)
+        if candidate.suffix.lower() != ".npz" or not candidate.is_file():
+            self._status({"phase":"error","model_state":"error","error_message":"请选择有效的 .npz 模型文件","detail":"模型导入没有完成。"})
+            return
+        try:
+            self._model.close()
+            self._model=InferenceClient(candidate, on_result=self._on_advice, on_status=self._on_model_status, threads=2)
+            self._model.start()
+            self._status({"model_state":"loading","model_summary":f"正在加载：{candidate.name}","detail":"正在校验模型文件。"})
+        except Exception as exc:
+            self.log.write("model_import_failed", level="ERROR", message=type(exc).__name__)
+            self._status({"phase":"error","model_state":"error","error_message":"模型导入失败","detail":"请查看诊断信息。"})
 
     def export_diagnostics(self) -> None:
         destination=self.paths["exports_dir"] / f"diagnostics-{int(time.time())}.zip"

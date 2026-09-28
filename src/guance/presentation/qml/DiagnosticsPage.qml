@@ -16,7 +16,7 @@ ScrollView {
                 Text { text: "当前状态"; color: Theme.ink; font.family: Theme.family; font.pixelSize: 15; font.bold: true }
                 Text { text: viewModel.statusTitle + " · " + viewModel.networkMode; color: Theme.muted; font.family: Theme.family; font.pixelSize: 12 }
                 Text { text: viewModel.lastError || "没有待处理错误"; color: viewModel.lastError ? Theme.danger : Theme.muted; font.family: Theme.family; font.pixelSize: 12; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-                ActionButton { text: "导出诊断"; subtle: true; onClicked: viewModel.request_export_diagnostics() }
+                ActionButton { objectName: "exportDiagnosticsButton"; text: "导出诊断"; subtle: true; onClicked: viewModel.request_export_diagnostics() }
             }
         }
         Repeater {

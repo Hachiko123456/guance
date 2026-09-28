@@ -1,0 +1,22 @@
+{
+  "suite": "guance-ui-acceptance",
+  "version": "0.1.0",
+  "scope": "offscreen QML with fake ViewModel/controller ports",
+  "real_system_side_effects": false,
+  "cases": [
+    {"id": "UI-001", "title": "start opens consent or emits start after trusted state"},
+    {"id": "UI-002", "title": "unchecked consent disables authorize and cancel is a no-op"},
+    {"id": "UI-003", "title": "checked consent emits authorize true and closes dialog"},
+    {"id": "UI-004", "title": "stop emits stop and clears recommendation state"},
+    {"id": "UI-005", "title": "demo enters isolated offline demo"},
+    {"id": "UI-006", "title": "exit demo clears demo state"},
+    {"id": "UI-007", "title": "floating window shows once and repeated requests do not duplicate it"},
+    {"id": "UI-008", "title": "floating close synchronizes hidden state and can reopen"},
+    {"id": "UI-009", "title": "candidate toggle expands and collapses without changing data"},
+    {"id": "UI-010", "title": "model file dialog opens, cancel is a no-op, selection emits path"},
+    {"id": "UI-011", "title": "remove certificate requires confirmation"},
+    {"id": "UI-012", "title": "repair network emits repair intent"},
+    {"id": "UI-013", "title": "diagnostics export emits export intent"},
+    {"id": "UI-014", "title": "top navigation switches pages"}
+  ]
+}

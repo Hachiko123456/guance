@@ -14,11 +14,11 @@ from PySide6.QtCore import QObject, Property, QThread, Qt, QUrl, Signal, Slot
 from .formatting import display_card, kind_name, safe_text, seat_name
 
 _PHASES = {
-    "idle": ("尚未连接", "先启动助手，再打开微信里的大掼蛋。", "neutral"),
+    "idle": ("尚未启动", "点击“开始使用”后，掼策才会等待大掼蛋连接。", "neutral"),
     "preparing": ("正在准备", "正在检查本机组件，请稍候。", "info"),
     "starting": ("正在启动", "网络准备完成后，请重新打开大掼蛋。", "info"),
-    "waiting": ("等待对局", "助手已启动，等待新的对局消息。", "info"),
-    "connected": ("等待对局", "请进入已支持的经典玩法。", "success"),
+    "waiting": ("等待游戏连接", "采集已启动，请重新打开微信里的大掼蛋。", "info"),
+    "connected": ("已连接，等待对局", "已捕获大掼蛋连接，进入牌桌后会同步局面。", "success"),
     "ready": ("对局已同步", "只显示建议，实际出牌仍由你决定。", "success"),
     "thinking": ("正在计算", "正在根据当前公开局面计算推荐。", "info"),
     "stopping": ("正在停止", "正在恢复之前的网络设置。", "info"),
@@ -33,9 +33,9 @@ class GuanceViewModel(QObject):
 
     startRequested = Signal()
     stopRequested = Signal()
-    authorizeRequested = Signal()
+    authorizeRequested = Signal(bool)
     repairRequested = Signal()
-    removeCertificateRequested = Signal()
+    removeCertificateRequested = Signal(bool)
     modelImportRequested = Signal(str)
     exportDiagnosticsRequested = Signal()
     demoRequested = Signal()
@@ -150,7 +150,7 @@ class GuanceViewModel(QObject):
     def request_authorize(self, consent: bool) -> None:
         # A button click alone is not enough: the checkbox must be explicit.
         if consent and not self._demo and not self._busy:
-            self.authorizeRequested.emit()
+            self.authorizeRequested.emit(bool(consent))
 
     @Slot()
     def request_repair(self) -> None:
@@ -160,7 +160,7 @@ class GuanceViewModel(QObject):
     @Slot(bool)
     def request_remove_certificate(self, consent: bool) -> None:
         if consent and not self._demo and not self._running and not self._busy:
-            self.removeCertificateRequested.emit()
+            self.removeCertificateRequested.emit(bool(consent))
 
     @Slot(str)
     def request_model_import(self, path: str) -> None:
@@ -272,15 +272,34 @@ class GuanceViewModel(QObject):
             return
         candidates = []
         for item in data.get("candidates", [])[:5]:
+            raw_kind = item.get("kind", "")
+            is_pass = raw_kind == 0 or raw_kind == "0" or str(raw_kind).lower() in {"pass", "过牌"}
+            kind_key = "pass" if is_pass else str(raw_kind)
             cards = [display_card(x, self.level) for x in item.get("cards", [])]
-            kind = kind_name(str(item.get("kind", "")))
-            candidates.append({"cards": cards, "kind": kind, "pass": item.get("kind") == "pass",
-                               "claim": [display_card(x, self.level) for x in item.get("claim", [])]})
+            kind = kind_name(kind_key)
+            # FableDan's claim values are ranks (for example, [5, 7]), not
+            # encoded cards. Formatting them as cards invents a suit and can
+            # display a false recommendation, so keep them as rank labels.
+            claims = [self._display_rank(x) for x in item.get("claim", [])]
+            candidates.append({"cards": cards, "kind": kind, "pass": is_pass,
+                               "claim": claims})
         self._candidates = candidates
         self._advice_state = "ready" if candidates else "empty"
         self._advice_message = "仅作建议，请在游戏内确认出牌。"
         self._elapsed_ms = float(data.get("elapsed_ms", 0))
         self.adviceChanged.emit()
+
+    @staticmethod
+    def _display_rank(value: Any) -> str:
+        if isinstance(value, dict):
+            return safe_text(value.get("rank", "?"), 12)
+        try:
+            rank = int(value)
+        except (TypeError, ValueError):
+            return safe_text(value, 12)
+        return {1: "A", 11: "J", 12: "Q", 13: "K", 14: "小王", 15: "大王"}.get(
+            rank, str(rank)
+        )
 
     def _clear(self, data: dict[str, Any]) -> None:
         self._candidates = []

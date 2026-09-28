@@ -5,6 +5,7 @@ import QtQuick.Controls.Basic
 ScrollView {
     id: page
     signal startClicked()
+    signal floatingRequested()
     clip: true
     contentWidth: availableWidth
     ColumnLayout {
@@ -19,7 +20,7 @@ ScrollView {
                 anchors.fill: parent; anchors.leftMargin: 14; anchors.rightMargin: 10
                 Text { text: "离线演示"; color: Theme.amber; font.family: Theme.family; font.pixelSize: 12; font.bold: true }
                 Text { text: "示例数据 · 未连接微信 · 未调用模型"; color: Theme.amber; font.family: Theme.family; font.pixelSize: 12; Layout.fillWidth: true }
-                ActionButton { text: "退出演示"; subtle: true; implicitHeight: 30; onClicked: viewModel.exit_demo() }
+                ActionButton { objectName: "exitDemoButton"; text: "退出演示"; subtle: true; implicitHeight: 30; onClicked: viewModel.exit_demo() }
             }
         }
         RowLayout {
@@ -142,9 +143,10 @@ ScrollView {
                         Layout.fillWidth: true
                     }
                     ActionButton {
-                        text: "打开小窗  ↗"; subtle: true; implicitHeight: 30
+                        objectName: "floatingButton"
+                         text: "打开小窗  ↗"; subtle: true; implicitHeight: 30
                         contentItem: Text { text: parent.text; color: viewModel.adviceVisible ? "#DFF1EB" : Theme.accent; font.family: Theme.family; font.pixelSize: 12; verticalAlignment: Text.AlignVCenter }
-                        onClicked: viewModel.set_floating(true)
+                        onClicked: page.floatingRequested()
                     }
                 }
             }
@@ -240,7 +242,7 @@ ScrollView {
         RowLayout {
             Layout.fillWidth: true
             Text { text: "本地运行 · 不自动出牌"; color: Theme.faint; font.family: Theme.family; font.pixelSize: 11; Layout.fillWidth: true }
-            ActionButton { visible: !viewModel.running && !viewModel.demoMode; text: "先看看界面"; subtle: true; implicitHeight: 30; onClicked: viewModel.enable_demo() }
+            ActionButton { objectName: "demoButton"; visible: !viewModel.running && !viewModel.demoMode; text: "先看看界面"; subtle: true; implicitHeight: 30; onClicked: viewModel.enable_demo() }
         }
         Item { implicitHeight: 6 }
     }

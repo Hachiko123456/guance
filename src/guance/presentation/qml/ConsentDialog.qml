@@ -1,11 +1,10 @@
 import QtQuick
 import QtQuick.Layouts
-import QtQuick.Controls.Basic
+import QtQuick.Controls
 
 Dialog {
     id: dialog
     objectName: "consentDialog"
-    title: ""
     modal: true
     closePolicy: Popup.CloseOnEscape
     width: Math.min(560, parent.width - 48)
@@ -13,6 +12,8 @@ Dialog {
     anchors.centerIn: parent
     padding: 26
     onOpened: consent.checked = false
+    function accept() { close() }
+    function reject() { close() }
     background: Rectangle { color: Theme.panel; radius: 16; border.color: Theme.line }
     contentItem: ColumnLayout {
         spacing: 16
