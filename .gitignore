@@ -1,29 +1,76 @@
+# Python and test caches
 __pycache__/
 *.py[cod]
+*.egg-info/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Local virtual environments and environment variables
 .venv/
-build/
-dist/
-logs/*
-!logs/.gitkeep
-runtime/local/
+venv/
+env/
+.env
+.env.*
+!.env.example
+!.env.sample
+
+# Generated builds and local frozen runtime
+/build/
+/dist/
+/release/
+/release_local/
+/runtime/local/
+/runtime/mitmproxy/
+
+# Local logs, recordings, proxy leases and preferences
+/logs/*
+!/logs/.gitkeep
+/debug/captures/
+/private_data/
 *.mitm
+*.pcap
+*.pcapng
+*.dmp
+proxy-lease.json
+preferences.json
+
+# Certificate material and secrets, including packaged key stores
 *.pem
 *.p12
+*.pfx
 *.key
 *.cer
-.DS_Store
+*.crt
+*.der
+*.secret
+
+# Local model assets (not model documentation)
 *.npz
 *.pt
 *.pth
 *.ckpt
-private_data/
-release_local/
-# Build output and local runtime
-runtime/mitmproxy/
-release/
-build/pyinstaller/
+*.onnx
+*.safetensors
+!data/profiles/*/models/README.md
 
-Guance.spec
+# IDE state, local assistant records and legacy scratch checkout
+.idea/
+.vscode/
+/.workbuddy/
+/.codex/
+/docs/agent/
+/pythonProject/
+
+# OS metadata
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Guance.spec is a maintained build input and must remain trackable.
