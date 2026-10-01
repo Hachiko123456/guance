@@ -21,7 +21,7 @@
 
 | 错误码 | 含义 | 优先动作 |
 |---|---|---|
-| `CONSENT_REQUIRED` | 操作缺少明确授权 | 阅读说明后重新操作 |
+| `CERTIFICATE_OPERATION` | 证书适配操作抛出异常 | 查看证书状态和脱敏错误，不跳过授权 |
 | `HELPER_NOT_FOUND` / `ADDON_NOT_FOUND` | 缺少 runtime 输入 | 核对完整发布目录 |
 | `HELPER_START_FAILED` | 采集 helper 未启动 | 检查 runtime 和权限 |
 | `PROXY_RESTORE_FAILED` | 代理恢复未成功 | 停止继续操作，核对冲突与恢复提示 |
