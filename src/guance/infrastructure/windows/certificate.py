@@ -18,35 +18,75 @@ from pathlib import Path
 from typing import Any
 
 from guance.infrastructure.capture.diagnostics import redact_value
-from guance.ports.capture import (
-    CertificateConsentRequest,
-    CertificateStatus,
-)
+from guance.ports.capture import CertificateConsentRequest, CertificateStatus
 
 
 CertificateChecker = Callable[[Path], bool | str | CertificateStatus]
 CertificateProvisioner = Callable[[Path, int], Any]
 CertificateRemover = Callable[[Path, int], Any]
+_CERTUTIL_TIMEOUT_SECONDS = 15.0
+
 
 
 def _certutil() -> str:
     import shutil
+
     path = shutil.which("certutil.exe") or shutil.which("certutil")
     if not path:
         raise RuntimeError("Windows certutil.exe was not found")
     return path
 
 
-def _run_certutil(args: list[str]) -> dict[str, Any]:
+
+def _run_certutil(args: list[str], *, timeout: float = _CERTUTIL_TIMEOUT_SECONDS) -> dict[str, Any]:
+    """Run certutil without a shell and with a bounded lifetime.
+
+    The return value is intentionally a small, redaction-safe operation record;
+    callers must still decide whether the requested state transition happened.
+    """
     import subprocess
+
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
-    result = subprocess.run([_certutil(), *args], capture_output=True, text=True,
-                            encoding="utf-8", errors="replace", creationflags=flags, check=False)
-    return {"ok": result.returncode == 0, "returncode": result.returncode,
-            "stdout": result.stdout[-512:], "stderr": result.stderr[-512:]}
+    try:
+        result = subprocess.run(
+            [_certutil(), *args],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            creationflags=flags,
+            check=False,
+            shell=False,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        return {
+            "ok": False,
+            "timed_out": True,
+            "message": "certutil 操作超时，未确认当前用户证书存储状态",
+            "stdout": _bounded_process_output(exc.stdout),
+            "stderr": _bounded_process_output(exc.stderr),
+        }
+    return {
+        "ok": result.returncode == 0,
+        "returncode": result.returncode,
+        "stdout": result.stdout[-512:],
+        "stderr": result.stderr[-512:],
+    }
+
+
+
+def _bounded_process_output(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        value = value.decode("utf-8", errors="replace")
+    return str(value)[-512:]
+
 
 
 def install_current_user_root(cert_path: Path, owner_hwnd: int = 0) -> dict[str, Any]:
+    del owner_hwnd  # certutil has no HWND parameter; consent is handled above this boundary.
     if os.name != "nt":
         raise RuntimeError("current-user root installation is Windows-only")
     if not cert_path.is_file():
@@ -54,20 +94,35 @@ def install_current_user_root(cert_path: Path, owner_hwnd: int = 0) -> dict[str,
     return _run_certutil(["-user", "-addstore", "Root", str(cert_path)])
 
 
+
 def check_current_user_root(cert_path: Path) -> bool:
+    """Check one exact certificate without going through ``inspect`` again.
+
+    ``inspect`` delegates to this function by default, so constructing another
+    manager here would recurse indefinitely.  The Windows store accepts a
+    SHA-1 certificate thumbprint as its precise CertId; the UI still displays
+    the SHA-256 fingerprint calculated by :class:`WindowsCertificateManager`.
+    """
     if os.name != "nt" or not cert_path.is_file():
         return False
-    fingerprint = WindowsCertificateManager(cert_path.parent, certificate_path=cert_path).inspect().fingerprint
-    return bool(fingerprint and _run_certutil(["-user", "-store", "Root", fingerprint])["ok"])
+    thumbprint = WindowsCertificateManager._sha1_fingerprint(cert_path)
+    return bool(
+        thumbprint
+        and _run_certutil(["-user", "-store", "Root", thumbprint]).get("ok", False)
+    )
+
 
 
 def remove_current_user_root(cert_path: Path, owner_hwnd: int = 0) -> dict[str, Any]:
+    del owner_hwnd  # certutil has no HWND parameter; consent is handled above this boundary.
     if os.name != "nt":
         raise RuntimeError("current-user root removal is Windows-only")
-    fingerprint = WindowsCertificateManager(cert_path.parent, certificate_path=cert_path).inspect().fingerprint
-    if not fingerprint:
-        return {"ok": True, "state": "missing"}
-    return _run_certutil(["-user", "-delstore", "Root", fingerprint])
+    if not cert_path.is_file():
+        return {"ok": True, "state": "missing", "message": "证书文件已不存在"}
+    thumbprint = WindowsCertificateManager._sha1_fingerprint(cert_path)
+    if not thumbprint:
+        return {"ok": False, "state": "invalid", "message": "无法计算证书 SHA-1 指纹"}
+    return _run_certutil(["-user", "-delstore", "Root", thumbprint])
 
 
 class WindowsCertificateManager:
@@ -113,7 +168,7 @@ class WindowsCertificateManager:
         path = self._find_certificate()
         if path is None:
             return CertificateStatus(
-                state="missing", message="capture CA certificate is not present"
+                state="missing", message="未找到采集 CA 证书文件"
             )
         fingerprint = self._fingerprint(path)
         if self._trust_checker is None:
@@ -121,7 +176,7 @@ class WindowsCertificateManager:
                 state="unknown",
                 fingerprint=fingerprint,
                 path=str(path),
-                message="certificate is present but trust has not been verified",
+                message="证书文件存在，但尚未验证信任状态",
             )
         try:
             checked = self._trust_checker(path)
@@ -140,14 +195,14 @@ class WindowsCertificateManager:
                 state=state,
                 fingerprint=fingerprint,
                 path=str(path),
-                message="certificate trust check completed",
+                message="已完成证书信任检查",
             )
         except Exception as exc:
             return CertificateStatus(
                 state="error",
                 fingerprint=fingerprint,
                 path=str(path),
-                message=f"certificate trust check failed: {type(exc).__name__}",
+                message=f"证书信任检查失败：{type(exc).__name__}",
             )
 
     def prepare(self, consent: bool, owner_hwnd: int = 0) -> dict[str, Any]:
@@ -157,28 +212,28 @@ class WindowsCertificateManager:
                 ok=False,
                 state="consent_required",
                 status=before,
-                message="explicit certificate consent was not provided",
+                message="未获得明确的证书安装同意，未写入任何证书或信任存储",
             )
         if before.state.lower() in {"trusted", "ready", "installed"}:
             return self._result(
                 ok=True,
                 state="already_trusted",
                 status=before,
-                message="capture CA is already trusted",
+                message="采集 CA 已受信任，无需重复安装",
             )
         if before.state.lower() == "missing":
             return self._result(
                 ok=False,
                 state="missing",
                 status=before,
-                message="capture CA certificate is missing",
+                message="采集 CA 证书文件不存在，无法安装",
             )
         if self._provisioner is None:
             return self._result(
                 ok=False,
                 state="unsupported",
                 status=before,
-                message="no certificate provisioner is configured; no certificate was changed",
+                message="未配置证书安装器，未修改任何证书",
             )
         path = Path(before.path)
         try:
@@ -186,21 +241,31 @@ class WindowsCertificateManager:
         except Exception as exc:
             return self._result(
                 ok=False,
-                state="error",
+                state="install_failed",
                 status=before,
-                message=f"certificate preparation failed: {type(exc).__name__}",
+                message=f"证书安装失败：{type(exc).__name__}",
             )
         after = self.inspect()
-        result = self._result(
-            ok=after.state.lower() in {"trusted", "ready", "installed"},
-            state=after.state,
-            status=after,
-            message=after.message or "certificate preparation completed",
-        )
-        if isinstance(operation, Mapping):
-            result["operation"] = redact_value(
-                {str(k): operation[k] for k in list(operation)[:16]}
+        operation_ok = self._operation_succeeded(operation)
+        if operation_ok and after.state.lower() in {"trusted", "ready", "installed"}:
+            result = self._result(
+                ok=True,
+                state=after.state,
+                status=after,
+                message="采集 CA 已安装并获得信任",
             )
+        else:
+            result = self._result(
+                ok=False,
+                state="install_failed",
+                status=after,
+                message=(
+                    "证书安装操作失败，未建立信任"
+                    if not operation_ok
+                    else "证书安装操作已返回，但当前用户 Root 中仍未信任该证书"
+                ),
+            )
+        self._attach_operation(result, operation)
         return result
 
     def remove(self, consent: bool, owner_hwnd: int = 0) -> dict[str, Any]:
@@ -210,42 +275,59 @@ class WindowsCertificateManager:
                 ok=False,
                 state="consent_required",
                 status=before,
-                message="explicit certificate removal consent was not provided",
+                message="未获得明确的证书移除同意，未写入任何证书或信任存储",
             )
         if before.state.lower() == "missing":
             return self._result(
                 ok=True,
                 state="already_absent",
                 status=before,
-                message="capture CA is already absent",
+                message="采集 CA 已不存在，无需移除",
             )
         if self._remover is None:
             return self._result(
                 ok=False,
                 state="unsupported",
                 status=before,
-                message="no certificate remover is configured; no certificate was changed",
+                message="未配置证书移除器，未修改任何证书",
             )
         try:
             operation = self._remover(Path(before.path), int(owner_hwnd))
         except Exception as exc:
             return self._result(
                 ok=False,
-                state="error",
+                state="remove_failed",
                 status=before,
-                message=f"certificate removal failed: {type(exc).__name__}",
+                message=f"证书移除失败：{type(exc).__name__}",
             )
         after = self.inspect()
-        result = self._result(
-            ok=after.state.lower() == "missing",
-            state=after.state,
-            status=after,
-            message=after.message or "certificate removal completed",
-        )
-        if isinstance(operation, Mapping):
-            result["operation"] = redact_value(
-                {str(k): operation[k] for k in list(operation)[:16]}
+        operation_ok = self._operation_succeeded(operation)
+        after_state = after.state.lower()
+        if operation_ok and after_state in {"missing", "untrusted"}:
+            # The mitmproxy CA file is material, not trust state.  A successful
+            # store removal therefore remains successful when that file stays on disk.
+            result = self._result(
+                ok=True,
+                state="removed",
+                status=after,
+                message=(
+                    "采集 CA 已从当前用户 Root 信任存储移除"
+                    if after_state == "untrusted"
+                    else "采集 CA 已移除"
+                ),
             )
+        else:
+            result = self._result(
+                ok=False,
+                state="remove_failed",
+                status=after,
+                message=(
+                    "证书移除操作失败，未确认信任存储已更改"
+                    if not operation_ok
+                    else "证书文件仍处于受信任状态，移除未完成"
+                ),
+            )
+        self._attach_operation(result, operation)
         return result
 
     def consent_request(self, owner_hwnd: int = 0) -> CertificateConsentRequest:
@@ -267,18 +349,44 @@ class WindowsCertificateManager:
         return None
 
     @classmethod
+    def _certificate_bytes(cls, path: Path) -> bytes:
+        content = path.read_bytes()
+        match = cls._PEM_RE.search(content)
+        if not match:
+            return content
+        try:
+            return base64.b64decode(b"".join(match.group(1).split()), validate=True)
+        except (ValueError, binascii.Error):
+            return content
+
+    @classmethod
     def _fingerprint(cls, path: Path) -> str:
         try:
-            content = path.read_bytes()
+            return hashlib.sha256(cls._certificate_bytes(path)).hexdigest().upper()
         except OSError:
             return ""
-        match = cls._PEM_RE.search(content)
-        if match:
-            try:
-                content = base64.b64decode(b"".join(match.group(1).split()), validate=True)
-            except (ValueError, binascii.Error):
-                pass
-        return hashlib.sha256(content).hexdigest().upper()
+
+    @classmethod
+    def _sha1_fingerprint(cls, path: Path) -> str:
+        try:
+            return hashlib.sha1(cls._certificate_bytes(path)).hexdigest().upper()
+        except OSError:
+            return ""
+
+    @staticmethod
+    def _operation_succeeded(operation: Any) -> bool:
+        if isinstance(operation, Mapping):
+            return bool(operation.get("ok", False))
+        if isinstance(operation, bool):
+            return operation
+        return True
+
+    @staticmethod
+    def _attach_operation(result: dict[str, Any], operation: Any) -> None:
+        if isinstance(operation, Mapping):
+            result["operation"] = redact_value(
+                {str(k): operation[k] for k in list(operation)[:16]}
+            )
 
     @staticmethod
     def _result(*, ok: bool, state: str, status: CertificateStatus, message: str) -> dict[str, Any]:
@@ -290,4 +398,7 @@ __all__ = [
     "CertificateProvisioner",
     "CertificateRemover",
     "WindowsCertificateManager",
+    "check_current_user_root",
+    "install_current_user_root",
+    "remove_current_user_root",
 ]

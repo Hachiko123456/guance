@@ -252,7 +252,14 @@ class CertificatePort(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class RuntimePaths:
-    """Typed view over the contract's required paths dictionary."""
+    """Typed runtime paths with one canonical mitmproxy certificate directory.
+
+    The mitmproxy helper uses ``config_dir / "mitmproxy"`` as its confdir and
+    generates its CA there.  ``cert_dir`` is retained in the public shape for
+    compatibility with older app-path mappings, but is normalized to that same
+    directory so certificate inspection can never look in a stale data/certs
+    location.
+    """
 
     data_dir: Path
     runtime_dir: Path
@@ -260,13 +267,20 @@ class RuntimePaths:
     logs_dir: Path
     cert_dir: Path
 
+    def __post_init__(self) -> None:
+        for name in ("data_dir", "runtime_dir", "config_dir", "logs_dir", "cert_dir"):
+            object.__setattr__(self, name, Path(getattr(self, name)))
+        object.__setattr__(self, "cert_dir", self.config_dir / "mitmproxy")
+
     @classmethod
     def from_mapping(cls, paths: Mapping[str, Path | str]) -> "RuntimePaths":
-        required = ("data_dir", "runtime_dir", "config_dir", "logs_dir", "cert_dir")
+        required = ("data_dir", "runtime_dir", "config_dir", "logs_dir")
         missing = [name for name in required if name not in paths]
         if missing:
             raise ValueError(f"missing runtime paths: {', '.join(missing)}")
-        return cls(**{name: Path(paths[name]) for name in required})
+        values = {name: Path(paths[name]) for name in required}
+        values["cert_dir"] = Path(paths.get("cert_dir", values["config_dir"] / "mitmproxy"))
+        return cls(**values)
 
     def as_dict(self) -> dict[str, Path]:
         return {

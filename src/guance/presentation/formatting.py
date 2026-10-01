@@ -53,8 +53,32 @@ def display_card(value: Any, level: int = 0) -> dict[str, Any]:
 def seat_name(seat: int, my_seat: int) -> str:
     if seat < 0 or my_seat < 0:
         return "等待同步"
-    return {0: "自己", 1: "左侧", 2: "对家", 3: "右侧"}[(seat - my_seat) % 4]
+    return {0: "自己", 1: "左家", 2: "对家", 3: "右家"}[(seat - my_seat) % 4]
 
 
 def kind_name(kind: str) -> str:
     return KIND_NAMES.get(kind, kind if any("\u4e00" <= c <= "\u9fff" for c in kind) else "出牌")
+
+
+def hand_display_order(values: list[int] | tuple[int, ...], level: int) -> list[int]:
+    """Return display-only cards in Dagandan strength order (high to low)."""
+    def key(code: int) -> tuple[int, int, int]:
+        try:
+            suit, rank, copy = card_parts(code)
+        except (ValueError, TypeError):
+            return (-1, 0, 0)
+        if suit == 0:
+            strength = 100 if rank == 15 else 99
+        elif rank == level and 1 <= level <= 13:
+            strength = 98
+        elif rank == 1:
+            strength = 97
+        else:
+            strength = 80 + rank
+        return strength, suit, copy
+    return sorted(values, key=key, reverse=True)
+
+
+def public_play_display_order(values: list[int] | tuple[int, ...], level: int) -> list[int]:
+    """Return a new public-play list, low to high, without changing source cards."""
+    return list(reversed(hand_display_order(values, level)))

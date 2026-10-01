@@ -12,7 +12,7 @@ import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from guance.contracts import SourceFrame
 from guance.ports.capture import CaptureConfig, FrameHandler, StatusHandler
@@ -23,6 +23,21 @@ from .diagnostics import redact_text, redact_value
 FRAME_PREFIX = "GUANCE_FRAME "
 DIAG_PREFIX = "GUANCE_DIAG "
 _MAX_LINE_BYTES = 2 * 1024 * 1024
+_VALID_DIRECTIONS = frozenset(("client", "server"))
+CaptureDirection = Literal["client", "server", "unknown"]
+
+
+def _normalize_direction(value: object) -> CaptureDirection:
+    """Keep the addon direction contract explicit at the trust boundary.
+
+    The helper stdout stream is untrusted input. We preserve the two known
+    directions verbatim and intentionally do not reject a frame only because
+    its direction is missing or malformed; such a frame remains available to
+    the recorder/replay path with an explicit ``unknown`` direction.
+    """
+    if isinstance(value, str) and value in _VALID_DIRECTIONS:
+        return value  # type: ignore[return-value]
+    return "unknown"
 
 
 class CaptureStartError(RuntimeError):
@@ -57,6 +72,14 @@ class SubprocessCaptureSupervisor:
         self._reader_threads: list[threading.Thread] = []
         self._watch_thread: threading.Thread | None = None
         self._stop_event = threading.Event()
+
+    @property
+    def pid(self) -> int | None:
+        """Return the supervised helper PID while it is known."""
+        with self._lock:
+            process = self._process
+        value = getattr(process, "pid", None) if process is not None else None
+        return value if isinstance(value, int) and value > 0 else None
 
     @property
     def running(self) -> bool:
@@ -298,6 +321,7 @@ class SubprocessCaptureSupervisor:
                 received_at=received_at,
                 connection_id=redact_text(str(value.get("connection_id", "")), 96),
                 sequence=sequence,
+                direction=_normalize_direction(value.get("direction")),
             )
         except (
             ValueError,

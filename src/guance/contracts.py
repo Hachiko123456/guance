@@ -12,6 +12,7 @@ class SourceFrame:
     received_at: float
     connection_id: str = ""
     sequence: int = 0
+    direction: Literal["client", "server", "unknown"] = "unknown"
 
 @dataclass(frozen=True, slots=True)
 class PublicAction:

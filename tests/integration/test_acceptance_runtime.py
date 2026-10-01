@@ -8,10 +8,13 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import zipfile
 from typing import Any
 
-from guance.application.controller import GuanceController
+from guance.application.controller import DebugFrameRecorder, GuanceController
+from guance.config import app_paths
 from guance.application.runtime import RuntimeOptions, RuntimeService
+from guance.contracts import EngineUpdate, SourceFrame
 from guance.infrastructure.capture.command import build_mitm_command
 from guance.infrastructure.capture.diagnostics import BoundedDiagnostics
 from guance.infrastructure.windows.proxy import InMemoryProxyBackend
@@ -138,7 +141,10 @@ def controller_paths(tmp_path: Path) -> dict[str, Path]:
         "cert_dir": tmp_path / "cert",
         "exports_dir": tmp_path / "exports",
         "models_dir": tmp_path / "models",
-        "root_dir": Path("D:/project/guance"),
+        # Keep debug-capture fixtures inside pytest's isolated workspace.  The
+        # production controller still resolves its root from the real project
+        # or frozen data directory; tests must never create artifacts there.
+        "root_dir": tmp_path / "project",
     }
     for path in values.values():
         path.mkdir(parents=True, exist_ok=True)
@@ -148,6 +154,7 @@ def controller_paths(tmp_path: Path) -> dict[str, Path]:
 def build_controller(tmp_path: Path) -> tuple[GuanceController, GuanceViewModel, FakeRuntime, FakeModel]:
     vm = GuanceViewModel()
     controller = GuanceController(vm, paths=controller_paths(tmp_path))
+    controller._capture_port_available = lambda: True
     runtime = FakeRuntime()
     model = FakeModel()
     controller._runtime = runtime
@@ -340,3 +347,184 @@ def test_core_009_runtime_stops_safely_before_helper_termination(tmp_path: Path)
     assert service.stop()["ok"] is True
     assert events.index("capture.wait_ready") < events.index("capture.stop")
     assert service.state == "idle"
+
+
+def test_application_paths_keep_capture_ca_and_runtime_confdir_aligned(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("GUANCE_DATA_DIR", str(tmp_path / "Guance"))
+    paths = app_paths()
+    assert paths["cert_dir"] == paths["config_dir"] / "mitmproxy"
+
+
+
+def test_debug_frame_recorder_persists_before_parser(tmp_path: Path) -> None:
+    recorder = DebugFrameRecorder(tmp_path / "captures")
+    path = recorder.start()
+    frame = SourceFrame(
+        host="hlxyxws.huanle.qq.com",
+        payload=b"debug-frame",
+        received_at=123.5,
+        connection_id="conn-1",
+        sequence=7,
+        direction="server",
+    )
+    recorder.append(frame)
+    recorder.close()
+
+    records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    assert len(records) == 1
+    assert records[0]["host"] == frame.host
+    assert records[0]["sequence"] == frame.sequence
+    assert records[0]["direction"] == frame.direction
+    assert records[0]["payload_bytes"] == len(frame.payload)
+    assert records[0]["payload_b64"] == "ZGVidWctZnJhbWU="
+
+
+def test_debug_frame_recorder_exposes_waiting_status_and_live_game_metadata(tmp_path: Path) -> None:
+    recorder = DebugFrameRecorder(tmp_path / "captures")
+    path = recorder.start()
+
+    status_path = path.parent / "capture_status.json"
+    initial = json.loads(status_path.read_text(encoding="utf-8"))
+    assert initial["state"] == "waiting_for_frames"
+    assert initial["frames"] == 0
+
+    recorder.append(SourceFrame(
+        host="hlxyxws.huanle.qq.com",
+        payload=b"first-frame",
+        received_at=1.0,
+        connection_id="conn-1",
+        sequence=7,
+        direction="server",
+    ))
+    recorder.begin_game("game-0001", 7)
+
+    live_status = json.loads(status_path.read_text(encoding="utf-8"))
+    assert live_status["state"] in {"capturing", "capturing_game"}
+    assert live_status["frames"] == 1
+    assert (path.parent / "games" / "game-0001" / "metadata.json").is_file()
+
+    recorder.close()
+    closed = json.loads(status_path.read_text(encoding="utf-8"))
+    assert closed["state"] == "closed"
+
+
+def test_controller_preserves_first_engine_error_over_repeated_paused_updates(tmp_path: Path) -> None:
+    controller, _vm, _runtime, _model = build_controller(tmp_path)
+
+    controller._handle_update(EngineUpdate(
+        kind="error", message="played card absent from own hand", error_code="state_invalid"
+    ))
+    controller._handle_update(EngineUpdate(
+        kind="error", message="played card absent from own hand", error_code="engine_paused"
+    ))
+    controller._handle_update(EngineUpdate(
+        kind="error", message="played card absent from own hand", error_code="engine_paused"
+    ))
+
+    assert controller._primary_engine_error == {
+        "code": "state_invalid",
+        "message": "played card absent from own hand",
+        "game_id": "",
+    }
+    assert controller._engine_error_repeats == 2
+
+
+def test_floating_layout_is_persisted_and_restored(tmp_path: Path) -> None:
+    controller, vm, _runtime, _model = build_controller(tmp_path)
+    layout = {"saved": True, "mode": "left", "x": 17, "y": 23, "width": 520, "height": 720}
+    controller.save_floating_layout(layout)
+    preferences = json.loads((tmp_path / "config" / "preferences.json").read_text(encoding="utf-8"))
+    assert preferences["floating_layout"] == layout
+    controller.close()
+
+    vm2 = GuanceViewModel()
+    controller2 = GuanceController(vm2, paths=controller_paths(tmp_path))
+    assert vm2.floatingLayout == layout
+    controller2.close()
+
+
+def test_controller_writes_debug_frame_before_session_feed(tmp_path: Path) -> None:
+    controller, _vm, _runtime, _model = build_controller(tmp_path)
+    controller.paths["root_dir"] = tmp_path / "project"
+    controller.preferences["debug_capture_enabled"] = True
+    controller._open_debug_recorder()
+    observed: list[bool] = []
+    controller.session.feed = lambda _frame: observed.append(
+        bool(controller._debug_recorder and controller._debug_recorder.path and
+             controller._debug_recorder.path.read_text(encoding="utf-8"))
+    ) or []
+
+    controller._on_frame(SourceFrame(
+        host="game.example",
+        payload=b"before-parse",
+        received_at=1.0,
+        connection_id="c",
+        sequence=1,
+    ))
+    controller._close_debug_recorder()
+
+    assert observed == [True]
+
+
+def test_diagnostics_export_contains_current_error_state_and_redacted_metadata(tmp_path: Path) -> None:
+    controller, vm, runtime, _model = build_controller(tmp_path)
+    controller.preferences["debug_capture_enabled"] = True
+    controller._open_debug_recorder()
+    controller._debug_recorder.append(SourceFrame(
+        host="hlxyxws.huanle.qq.com",
+        payload=b"raw-opponent-hand-must-not-be-exported",
+        received_at=123.5,
+        connection_id="conn-1",
+        sequence=7,
+        direction="server",
+    ))
+    vm.apply_status({
+        "phase": "error",
+        "error_message": "played card absent from own hand",
+        "diagnostics": {"state_version": 2, "sync_error": "state_invalid"},
+    })
+    vm.append_log({"level": "ERROR", "code": "STATE_INVALID", "message": "state_version=2"})
+    controller.session._paused_reason = "played card absent from own hand"
+
+    controller.export_diagnostics()
+
+    archives = sorted((tmp_path / "exports").glob("diagnostics-*.zip"))
+    assert len(archives) == 1
+    with zipfile.ZipFile(archives[0]) as archive:
+        names = set(archive.namelist())
+        assert names == {"manifest.json", "recent.jsonl"}
+        manifest = json.loads(archive.read("manifest.json"))
+        text = "\n".join(archive.read(name).decode("utf-8") for name in names)
+
+    status = manifest["status"]
+    assert status["view_model"]["last_error"] == "played card absent from own hand"
+    assert status["view_model"]["phase"] == "error"
+    assert status["view_model"]["diagnostics"][-1]["label"] == "sync_error"
+    assert status["session"]["paused"] is True
+    assert status["session"]["paused_reason"] == "played card absent from own hand"
+    assert status["debug_capture"]["frames"] == 1
+    assert status["debug_capture"]["directions"] == {"server": 1}
+    assert status["debug_capture"]["session_directory"]
+    assert "raw-opponent-hand-must-not-be-exported" not in text
+    assert "payload_b64" not in text
+    assert "DIAGNOSTICS_EXPORTED" in "\n".join(
+        str(item) for item in vm.logs
+    )
+    assert archives[0].name in "\n".join(str(item) for item in vm.logs)
+
+
+def test_diagnostics_export_failure_is_observable(tmp_path: Path) -> None:
+    controller, vm, _runtime, _model = build_controller(tmp_path)
+
+    def fail_export(*_args, **_kwargs):
+        raise OSError("disk full")
+
+    controller.log.export = fail_export
+    controller.export_diagnostics()
+
+    assert not list((tmp_path / "exports").glob("*.zip"))
+    assert any(
+        item.get("code") == "DIAGNOSTICS_EXPORT_FAILED"
+        and "OSError" in item.get("message", "")
+        for item in vm.logs
+    )

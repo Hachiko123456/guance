@@ -76,10 +76,41 @@ ScrollView {
             }
         }
         Rectangle {
-            Layout.fillWidth: true; implicitHeight: 150; radius: 14; color: Theme.panel; border.color: Theme.line
+            Layout.fillWidth: true; implicitHeight: 142; radius: 14; color: Theme.panel; border.color: Theme.line
+            ColumnLayout { anchors.fill: parent; anchors.margins: 20; spacing: 8
+                RowLayout {
+                    Layout.fillWidth: true
+                    Text { text: "调试报文保存"; color: Theme.ink; font.family: Theme.family; font.pixelSize: 15; font.bold: true; Layout.fillWidth: true }
+                    Switch {
+                        objectName: "debugCaptureSwitch"
+                        checked: viewModel.debugCaptureEnabled
+                        enabled: !viewModel.running && !viewModel.busy
+                        onToggled: viewModel.set_debug_capture_enabled(checked)
+                    }
+                }
+                Text {
+                    text: "保存白名单 WebSocket 报文到项目目录 debug/captures；下次开始使用时生效。"
+                    color: Theme.muted
+                    font.family: Theme.family
+                    font.pixelSize: 12
+                    wrapMode: Text.WordWrap
+                    Layout.fillWidth: true
+                }
+                Text {
+                    text: "仅用于本地调试，单次会话最多 256 MB，不会加入普通诊断包。"
+                    color: Theme.faint
+                    font.family: Theme.family
+                    font.pixelSize: 11
+                    Layout.fillWidth: true
+                }
+            }
+        }
+        Rectangle {
+            Layout.fillWidth: true; implicitHeight: 166; radius: 14; color: Theme.panel; border.color: Theme.line
             ColumnLayout { anchors.fill: parent; anchors.margins: 20; spacing: 8
                 Text { text: "网络组件"; color: Theme.ink; font.family: Theme.family; font.pixelSize: 15; font.bold: true }
                 Text { text: viewModel.certificateSummary; color: Theme.muted; font.family: Theme.family; font.pixelSize: 12; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                Text { visible: viewModel.certificateFingerprint !== ""; text: "指纹：" + viewModel.certificateFingerprint; color: Theme.faint; font.family: Theme.family; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight }
                 RowLayout {
                     ActionButton { objectName: "removeCertificateButton"; text: "移除本机授权"; subtle: true; enabled: !viewModel.running && !viewModel.busy; onClicked: removeDialog.open() }
                     ActionButton { objectName: "repairNetworkButton"; text: "修复网络"; subtle: true; onClicked: viewModel.request_repair() }

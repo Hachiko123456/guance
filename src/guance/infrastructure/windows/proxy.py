@@ -14,6 +14,24 @@ from typing import Any, Protocol
 from guance.ports.capture import PlatformUnavailableError, ProxySnapshot
 
 
+def build_local_proxy_snapshot(current: ProxySnapshot, host: str, port: int) -> ProxySnapshot:
+    """Build the exact local proxy snapshot without touching the OS."""
+    if not host or any(char in str(host) for char in "\r\n"):
+        raise ValueError("local proxy host must be non-empty and contain no newlines")
+    if not isinstance(port, int) or not 1 <= port <= 65535:
+        raise ValueError("local proxy port must be between 1 and 65535")
+    formatted_host = str(host).strip()
+    if ":" in formatted_host and not formatted_host.startswith("["):
+        formatted_host = f"[{formatted_host}]"
+    return ProxySnapshot(
+        enabled=True,
+        server=f"{formatted_host}:{port}",
+        auto_config_url=current.auto_config_url,
+        auto_detect=current.auto_detect,
+        bypass=current.bypass,
+    )
+
+
 class RegistryAccessor(Protocol):
     def read_proxy(self) -> ProxySnapshot:
         ...
@@ -49,18 +67,8 @@ class WindowsProxyBackend:
         return accessor.read_proxy()
 
     def apply_local(self, host: str, port: int) -> ProxySnapshot:
-        if not host or any(char in str(host) for char in "\r\n"):
-            raise ValueError("local proxy host must be non-empty and contain no newlines")
-        if not isinstance(port, int) or not 1 <= port <= 65535:
-            raise ValueError("local proxy port must be between 1 and 65535")
         current = self.snapshot()
-        target = ProxySnapshot(
-            enabled=True,
-            server=f"{self._format_host(host)}:{port}",
-            auto_config_url=current.auto_config_url,
-            auto_detect=current.auto_detect,
-            bypass=current.bypass,
-        )
+        target = build_local_proxy_snapshot(current, host, port)
         accessor = self._accessor()
         accessor.write_proxy(target)
         if self._refresh_enabled:
@@ -177,4 +185,9 @@ class InMemoryProxyBackend:
         return True
 
 
-__all__ = ["InMemoryProxyBackend", "RegistryAccessor", "WindowsProxyBackend"]
+__all__ = [
+    "InMemoryProxyBackend",
+    "RegistryAccessor",
+    "WindowsProxyBackend",
+    "build_local_proxy_snapshot",
+]

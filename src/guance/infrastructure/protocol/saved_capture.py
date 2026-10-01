@@ -43,7 +43,8 @@ def iter_game_frames(path: str | Path) -> Iterator[SourceFrame]:
                 if not isinstance(body, bytes):
                     raise ValueError("server WebSocket payload is not bytes")
                 yield SourceFrame(host=GAME_HOST, payload=body, received_at=float(timestamp),
-                                  connection_id=connection_id, sequence=sequence)
+                                  connection_id=connection_id, sequence=sequence,
+                                  direction="server")
                 sequence += 1
     if connections == 0:
         raise ValueError("no target Daguandan WebSocket found in capture")

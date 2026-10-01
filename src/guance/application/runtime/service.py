@@ -1,6 +1,7 @@
 """Application orchestration for capture, proxy, and certificate lifecycles."""
 from __future__ import annotations
 
+import os
 import threading
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -11,7 +12,8 @@ from guance.contracts import SourceFrame
 from guance.infrastructure.capture.diagnostics import BoundedDiagnostics, redact_text, redact_value
 from guance.infrastructure.capture.supervisor import CaptureStartError, SubprocessCaptureSupervisor
 from guance.infrastructure.windows.certificate import WindowsCertificateManager
-from guance.infrastructure.windows.proxy import WindowsProxyBackend
+from guance.application.runtime.lease import ProxyLease, ProxyLeaseStore, RuntimeInstanceLock
+from guance.infrastructure.windows.proxy import WindowsProxyBackend, build_local_proxy_snapshot
 from guance.ports.capture import (
     CaptureConfig,
     CaptureMode,
@@ -80,6 +82,20 @@ class RuntimeOptions:
             raise RuntimeConfigError("runtime timeouts must be positive")
 
 
+def _pid_is_alive(pid: int) -> bool:
+    if pid <= 0 or pid == os.getpid():
+        return pid == os.getpid()
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
 class RuntimeService:
     """Coordinate a safe capture session.
 
@@ -129,8 +145,13 @@ class RuntimeService:
         self._closed = False
         self._original_proxy: ProxySnapshot | None = None
         self._applied_proxy: ProxySnapshot | None = None
+        self._proxy_switched = False
         self._config: CaptureConfig | None = None
         self._last_error: dict[str, Any] | None = None
+        self._lease_store = ProxyLeaseStore(self.paths.config_dir / "proxy-lease.json")
+        self._instance_lock = RuntimeInstanceLock(self.paths.config_dir / "guance-runtime.lock")
+        self._helper_recovery_scheduled = False
+        self._shutting_down = False
 
     @property
     def state(self) -> str:
@@ -189,12 +210,113 @@ class RuntimeService:
             except Exception as exc:
                 return self._error(
                     "CERTIFICATE_OPERATION",
-                    f"certificate preparation failed: {type(exc).__name__}",
+                    f"证书准备失败：{type(exc).__name__}",
                 )
             safe = self._safe_mapping(result)
             self._record_result("certificate_prepare", safe)
             self._emit_status({"state": "certificate", **safe})
             return safe
+
+    def recover_stale_proxy(self) -> dict[str, Any]:
+        """Recover a persisted lease only when Guance still owns the proxy."""
+        with self._lock:
+            if self.running or self._state in {"starting", "running"}:
+                return self._error("RUNNING", "stop capture before recovering proxy state")
+            acquired_here = False
+            if not self._instance_lock.held:
+                if not self._instance_lock.acquire():
+                    return self._error(
+                        "RUNTIME_ALREADY_ACTIVE",
+                        "another Guance runtime owns the proxy lease",
+                    )
+                acquired_here = True
+            try:
+                return self._recover_stale_proxy_locked()
+            finally:
+                if acquired_here:
+                    self._instance_lock.release()
+
+    def _recover_stale_proxy_locked(self) -> dict[str, Any]:
+        try:
+            lease = self._lease_store.load()
+        except Exception as exc:
+            return self._error("PROXY_LEASE_INVALID", f"proxy lease could not be read: {type(exc).__name__}")
+        if lease is None:
+            result = {"ok": True, "state": "no_stale_lease", "message": "no stale proxy lease was found"}
+            self._emit_status(result)
+            return result
+        if _pid_is_alive(lease.app_pid) and lease.app_pid != os.getpid():
+            result = {
+                "ok": False,
+                "state": "proxy_conflict",
+                "error_code": "RUNTIME_ALREADY_ACTIVE",
+                "message": "another Guance process still owns the proxy lease",
+                "guance_pid": lease.app_pid,
+                "helper_pid": lease.helper_pid,
+            }
+            self._last_error = result
+            self._emit_status(result)
+            return result
+        try:
+            current = self._proxy.snapshot()
+        except Exception as exc:
+            return self._error("PROXY_RECOVERY_FAILED", f"proxy snapshot failed: {type(exc).__name__}")
+
+        # If the process died before applying the local proxy, there is nothing
+        # to restore.  The lease is still cleared only when the original state
+        # is unchanged; an unrelated change remains a conflict.
+        if current == lease.original_proxy:
+            self._lease_store.append_event("stale_lease_cleared", lease)
+            self._lease_store.clear()
+            result = {"ok": True, "state": "stale_lease_cleared", "message": "unapplied proxy lease cleared"}
+            self._emit_status(result)
+            return result
+        # Never overwrite an external proxy change.  Only the exact applied
+        # snapshot proves that Guance still owns the settings.
+        if current != lease.applied_proxy:
+            try:
+                self._lease_store.update_state(lease, "conflict")
+            except Exception:
+                pass
+            result = {
+                "ok": False,
+                "state": "proxy_conflict",
+                "error_code": "PROXY_RECOVERY_CONFLICT",
+                "message": "proxy settings changed outside Guance; current settings were preserved",
+            }
+            self._last_error = result
+            self._emit_status(result)
+            return result
+        try:
+            lease = self._lease_store.update_state(lease, "restoring")
+            restored = bool(self._proxy.restore(lease.original_proxy, expected=lease.applied_proxy))
+        except Exception as exc:
+            restored = False
+            error_type = type(exc).__name__
+        else:
+            error_type = ""
+        if not restored:
+            try:
+                latest = self._proxy.snapshot()
+                state = "conflict" if latest != lease.applied_proxy else "recovery_failed"
+                self._lease_store.update_state(lease, state)
+            except Exception:
+                pass
+            result = {
+                "ok": False,
+                "state": "proxy_conflict" if not error_type else "repair_error",
+                "error_code": "PROXY_RECOVERY_CONFLICT" if not error_type else "PROXY_RECOVERY_FAILED",
+                "message": "proxy settings changed outside Guance; current settings were preserved"
+                if not error_type else f"proxy recovery failed: {error_type}",
+            }
+            self._last_error = result
+            self._emit_status(result)
+            return result
+        self._lease_store.append_event("stale_lease_restored", lease)
+        self._lease_store.clear()
+        result = {"ok": True, "state": "repaired", "message": "stale runtime proxy state restored"}
+        self._emit_status(result)
+        return result
 
     def start(self) -> dict[str, Any]:
         with self._lock:
@@ -208,6 +330,15 @@ class RuntimeService:
                 }
             if self._state == "starting":
                 return self._error("BUSY", "capture start is already in progress")
+            if not self._instance_lock.held and not self._instance_lock.acquire():
+                return self._error(
+                    "RUNTIME_ALREADY_ACTIVE",
+                    "another Guance instance is already using the capture runtime",
+                )
+            recovery = self._recover_stale_proxy_locked()
+            if not recovery.get("ok", False):
+                self._instance_lock.release()
+                return recovery
             self._state = "starting"
             self._last_error = None
             self._emit_status({"state": "starting", "mode": self.options.mode.value})
@@ -233,8 +364,25 @@ class RuntimeService:
                     if not config.addon_path.is_file():
                         return self._start_failure("ADDON_NOT_FOUND", "capture addon was not found")
                 original = self._proxy.snapshot()
+                target = build_local_proxy_snapshot(original, config.listen_host, config.listen_port)
+                self._original_proxy = original
+                self._applied_proxy = target
+                self._proxy_switched = False
+                lease = ProxyLease(
+                    original_proxy=original,
+                    applied_proxy=target,
+                    app_pid=os.getpid(),
+                    target_host=config.listen_host,
+                    target_port=config.listen_port,
+                    state="prepared",
+                )
+                self._lease_store.save(lease)
+                self._lease_store.append_event("prepared", lease)
                 self._capture.start(config, self._handle_frame, self._handle_capture_status)
                 self._config = config
+                helper_pid = getattr(self._capture, "pid", None)
+                if isinstance(helper_pid, int) and helper_pid > 0:
+                    lease = self._lease_store.update_helper_pid(lease, helper_pid)
                 if not self._capture.wait_ready(config.startup_timeout):
                     return self._start_failure(
                         "HELPER_NOT_READY",
@@ -243,8 +391,23 @@ class RuntimeService:
                 applied = self._proxy.apply_local(config.listen_host, config.listen_port)
                 if not isinstance(applied, ProxySnapshot):
                     raise RuntimeError("proxy adapter returned an invalid snapshot")
-                self._original_proxy = original
                 self._applied_proxy = applied
+                self._proxy_switched = True
+                lease = self._lease_store.load()
+                if lease is None:
+                    raise RuntimeError("proxy lease disappeared during startup")
+                active_lease = ProxyLease(
+                    original_proxy=original,
+                    applied_proxy=applied,
+                    app_pid=lease.app_pid,
+                    target_host=config.listen_host,
+                    target_port=config.listen_port,
+                    helper_pid=lease.helper_pid,
+                    state="active",
+                    created_at=lease.created_at,
+                )
+                self._lease_store.save(active_lease)
+                self._lease_store.append_event("active", active_lease)
                 self._state = "running"
                 result = {
                     "ok": True,
@@ -267,10 +430,14 @@ class RuntimeService:
         with self._lock:
             if self._closed and not self.running:
                 return {"ok": True, "state": "closed", "message": "runtime service is closed"}
+            self._shutting_down = True
             proxy_ok = True
             proxy_error = ""
             if self._original_proxy is not None:
                 try:
+                    lease = self._lease_store.load()
+                    if lease is not None:
+                        self._lease_store.update_state(lease, "restoring")
                     proxy_ok = bool(
                         self._proxy.restore(
                             self._original_proxy, expected=self._applied_proxy
@@ -296,12 +463,30 @@ class RuntimeService:
             if proxy_ok:
                 self._original_proxy = None
                 self._applied_proxy = None
+                self._proxy_switched = False
+                try:
+                    self._lease_store.clear()
+                except Exception as exc:
+                    proxy_ok = False
+                    proxy_error = f"proxy lease cleanup failed: {type(exc).__name__}"
+            else:
+                try:
+                    lease = self._lease_store.load()
+                    if lease is not None:
+                        self._lease_store.update_state(lease, "conflict")
+                except Exception:
+                    pass
             self._config = None
+            self._shutting_down = False
             self._state = (
                 "closed"
                 if self._closed
                 else ("error" if not proxy_ok or capture_error else "idle")
             )
+            # The helper is stopped regardless of proxy ownership.  Release the
+            # instance lock after cleanup so a later process can inspect a
+            # conflict, but never let it restore settings it does not own.
+            self._instance_lock.release()
             ok = proxy_ok and not capture_error
             result: dict[str, Any] = {
                 "ok": ok,
@@ -318,42 +503,8 @@ class RuntimeService:
             return result
 
     def repair(self) -> dict[str, Any]:
-        with self._lock:
-            if self.running or self._state == "running":
-                return self._error("RUNNING", "stop capture before repair")
-            restored = True
-            message = "no stale runtime proxy state was found"
-            if self._original_proxy is not None:
-                try:
-                    restored = bool(
-                        self._proxy.restore(
-                            self._original_proxy, expected=self._applied_proxy
-                        )
-                    )
-                    message = (
-                        "stale runtime proxy state restored"
-                        if restored
-                        else "proxy changed outside Guance; it was not overwritten"
-                    )
-                except Exception as exc:
-                    restored = False
-                    message = f"proxy repair failed: {type(exc).__name__}"
-            self._original_proxy = None
-            self._applied_proxy = None
-            result = {
-                "ok": restored,
-                "state": "repaired" if restored else "repair_error",
-                "certificate": self._inspect_certificate(),
-                "helper": {
-                    "path": self._helper_path().name,
-                    "exists": self._helper_path().is_file(),
-                },
-                "message": message,
-            }
-            if not restored:
-                result["error_code"] = "PROXY_REPAIR_FAILED"
-            self._emit_status(result)
-            return redact_value(result)
+        """Compatibility alias for cross-process stale proxy recovery."""
+        return self.recover_stale_proxy()
 
     def remove_certificate(self, consent: bool, owner_hwnd: int = 0) -> dict[str, Any]:
         with self._lock:
@@ -366,7 +517,7 @@ class RuntimeService:
             except Exception as exc:
                 return self._error(
                     "CERTIFICATE_OPERATION",
-                    f"certificate removal failed: {type(exc).__name__}",
+                    f"证书移除失败：{type(exc).__name__}",
                 )
             safe = self._safe_mapping(result)
             self._record_result("certificate_remove", safe)
@@ -391,7 +542,7 @@ class RuntimeService:
             self.paths.runtime_dir / "mitmproxy" / "mitmdump.exe"
         )
         addon_path = self.options.addon_path or self._default_addon_path()
-        confdir = self.paths.config_dir / "mitmproxy"
+        confdir = self.paths.cert_dir
         return CaptureConfig(
             helper_path=helper_path,
             addon_path=addon_path,
@@ -453,6 +604,15 @@ class RuntimeService:
         if not isinstance(safe, dict):
             return
         state = str(safe.get("state", "capture_status"))
+        if state == "started":
+            helper_pid = safe.get("pid")
+            if isinstance(helper_pid, int) and helper_pid > 0:
+                try:
+                    lease = self._lease_store.load()
+                    if lease is not None and lease.helper_pid != helper_pid:
+                        self._lease_store.update_helper_pid(lease, helper_pid)
+                except Exception:
+                    self._record("warning", "lease_helper_pid_update_failed", "helper pid could not be persisted")
         self._record(
             "info" if state not in {"stop_error", "frame_dropped"} else "warning",
             f"capture_{state}",
@@ -460,19 +620,40 @@ class RuntimeService:
             safe,
         )
         self._emit_status(safe)
+        if state in {"helper_exit", "watch_error", "stream_error"}:
+            self._schedule_helper_recovery()
+
+    def _schedule_helper_recovery(self) -> None:
+        with self._lock:
+            if self._shutting_down or self._helper_recovery_scheduled:
+                return
+            if self._original_proxy is None or not self._proxy_switched:
+                return
+            self._helper_recovery_scheduled = True
+        thread = threading.Thread(target=self._recover_after_helper_failure, name="guance-proxy-recovery", daemon=True)
+        thread.start()
+
+    def _recover_after_helper_failure(self) -> None:
+        try:
+            result = self.stop()
+            if result.get("ok"):
+                self._emit_status({"state": "helper_recovered", "message": "helper exited; proxy restored"})
+        finally:
+            with self._lock:
+                self._helper_recovery_scheduled = False
 
     def _start_failure(self, code: str, message: str, **fields: Any) -> dict[str, Any]:
-        # If the proxy was switched before a later step failed, restore it
-        # using the expected applied value.  Stopping the helper is always the
-        # final cleanup step.
+        """Clean up a partially started runtime without overwriting external changes."""
         proxy_ok = True
         if self._original_proxy is not None and self._applied_proxy is not None:
             try:
-                proxy_ok = bool(
-                    self._proxy.restore(
-                        self._original_proxy, expected=self._applied_proxy
-                    )
-                )
+                current = self._proxy.snapshot()
+                if current == self._original_proxy:
+                    proxy_ok = True
+                elif current == self._applied_proxy:
+                    proxy_ok = bool(self._proxy.restore(self._original_proxy, expected=self._applied_proxy))
+                else:
+                    proxy_ok = False
             except Exception:
                 proxy_ok = False
         try:
@@ -483,7 +664,23 @@ class RuntimeService:
         if proxy_ok:
             self._original_proxy = None
             self._applied_proxy = None
+            self._proxy_switched = False
+            try:
+                lease = self._lease_store.load()
+                if lease is not None:
+                    self._lease_store.append_event("start_failed_cleaned", lease, error_code=code)
+                self._lease_store.clear()
+            except Exception:
+                pass
+        else:
+            try:
+                lease = self._lease_store.load()
+                if lease is not None:
+                    self._lease_store.update_state(lease, "conflict")
+            except Exception:
+                pass
         self._config = None
+        self._instance_lock.release()
         self._state = "error"
         result: dict[str, Any] = {
             "ok": False,

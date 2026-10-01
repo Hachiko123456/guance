@@ -52,6 +52,7 @@ class FakeViewModel(QObject):
         self._observation: dict[str, Any] = {}
         self._hand: list[dict[str, Any]] = []
         self._remaining: list[dict[str, Any]] = []
+        self._recent_plays: list[dict[str, Any]] = []
         self._candidates: list[dict[str, Any]] = []
         self._advice_state = "empty"
         self._advice_message = "进入牌桌后，推荐会显示在这里。"
@@ -91,6 +92,7 @@ class FakeViewModel(QObject):
     trick = Property(int, lambda s: int(s._observation.get("trick", 0)), notify=observationChanged)
     handCards = Property(list, lambda s: s._hand, notify=observationChanged)
     remainingCards = Property(list, lambda s: s._remaining, notify=observationChanged)
+    recentPlays = Property(list, lambda s: s._recent_plays, notify=observationChanged)
     observationAvailable = Property(bool, lambda s: bool(s._observation), notify=observationChanged)
     adviceVisible = Property(bool, lambda s: s._advice_state == "ready" and bool(s._candidates),
                              notify=adviceChanged)

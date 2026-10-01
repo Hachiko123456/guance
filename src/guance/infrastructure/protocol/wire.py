@@ -59,14 +59,22 @@ def fields(body: bytes) -> dict[int, list[tuple[int, int | bytes]]]:
     return dict(groups)
 
 
-def scalar(group: dict[int, list[tuple[int, int | bytes]]], number: int, default: int = 0) -> int:
+def optional_scalar(
+    group: dict[int, list[tuple[int, int | bytes]]], number: int,
+) -> tuple[bool, int | None]:
+    """Read a scalar without losing protobuf field presence information."""
     values = group.get(number, [])
     if not values:
-        return default
+        return False, None
     require(len(values) == 1 and values[0][0] == 0, f"field {number} is not a scalar")
     value = values[0][1]
     assert isinstance(value, int)
-    return value
+    return True, value
+
+
+def scalar(group: dict[int, list[tuple[int, int | bytes]]], number: int, default: int = 0) -> int:
+    present, value = optional_scalar(group, number)
+    return value if present else default
 
 
 def blobs(group: dict[int, list[tuple[int, int | bytes]]], number: int) -> list[bytes]:

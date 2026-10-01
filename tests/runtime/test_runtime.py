@@ -1,18 +1,24 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import io
 import json
+import subprocess
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from guance.application.runtime import RuntimeOptions, RuntimeService
+from guance.application.runtime.lease import ProxyLease, ProxyLeaseStore
 from guance.contracts import SourceFrame
 from guance.infrastructure.capture.command import build_mitm_command
+from guance.infrastructure.capture import addon as capture_addon
 from guance.infrastructure.capture.diagnostics import BoundedDiagnostics, redact_text
 from guance.infrastructure.capture.supervisor import SubprocessCaptureSupervisor
+from guance.infrastructure.windows import certificate as certificate_module
 from guance.infrastructure.windows.certificate import WindowsCertificateManager
 from guance.infrastructure.windows.proxy import InMemoryProxyBackend
 from guance.ports.capture import (
@@ -179,33 +185,179 @@ def test_runtime_does_not_switch_proxy_when_listener_is_not_ready(tmp_path: Path
     assert "capture.stop" in events
 
 
-def test_certificate_manager_requires_explicit_consent(tmp_path: Path) -> None:
+def test_runtime_paths_and_capture_confdir_share_mitmproxy_directory(tmp_path: Path) -> None:
+    runtime_paths = RuntimePaths.from_mapping(
+        {
+            "data_dir": tmp_path / "data",
+            "runtime_dir": tmp_path / "runtime",
+            "config_dir": tmp_path / "config",
+            "logs_dir": tmp_path / "logs",
+            # Regression input from the old app_paths implementation.
+            "cert_dir": tmp_path / "data" / "certs",
+        }
+    )
+    service = RuntimeService(
+        runtime_paths,
+        options=RuntimeOptions(require_certificate=False),
+        capture=FakeCapture([]),
+        proxy=InMemoryProxyBackend(ProxySnapshot(enabled=False)),
+        certificate=FakeCertificate(),
+    )
+
+    assert runtime_paths.cert_dir == tmp_path / "config" / "mitmproxy"
+    assert service.paths.cert_dir == service.paths.config_dir / "mitmproxy"
+    assert service._build_config().confdir == service.paths.cert_dir
+
+    cert = service.paths.cert_dir / "mitmproxy-ca-cert.cer"
+    cert.parent.mkdir(parents=True)
+    cert.write_bytes(b"capture CA")
+    inspected = RuntimeService(
+        runtime_paths,
+        options=RuntimeOptions(require_certificate=False),
+        capture=FakeCapture([]),
+        proxy=InMemoryProxyBackend(ProxySnapshot(enabled=False)),
+        certificate=WindowsCertificateManager(
+            runtime_paths.cert_dir,
+            trust_checker=lambda _path: False,
+            platform_name="test",
+        ),
+    ).inspect()
+    assert inspected["certificate"]["state"] == "untrusted"
+    assert inspected["certificate"]["path"] == str(cert)
+
+
+def test_certificate_store_check_is_non_recursive_and_uses_one_sha1_lookup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cert = tmp_path / "mitmproxy-ca-cert.cer"
+    cert.write_bytes(b"fake DER certificate")
+    calls: list[list[str]] = []
+    monkeypatch.setattr(certificate_module, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(certificate_module, "_certutil", lambda: "certutil.exe")
+
+    def fake_run(args: list[str]) -> dict[str, bool]:
+        calls.append(args)
+        return {"ok": True}
+
+    monkeypatch.setattr(certificate_module, "_run_certutil", fake_run)
+
+    assert certificate_module.check_current_user_root(cert) is True
+    expected_sha1 = hashlib.sha1(cert.read_bytes()).hexdigest().upper()
+    assert calls == [["-user", "-store", "Root", expected_sha1]]
+
+
+def test_certificate_store_remove_uses_same_sha1_thumbprint_and_not_filename(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cert = tmp_path / "mitmproxy-ca-cert.cer"
+    cert.write_bytes(b"fake DER certificate")
+    calls: list[list[str]] = []
+    monkeypatch.setattr(certificate_module, "os", SimpleNamespace(name="nt"))
+
+    def fake_run(args: list[str]) -> dict[str, bool]:
+        calls.append(args)
+        return {"ok": True}
+
+    monkeypatch.setattr(certificate_module, "_run_certutil", fake_run)
+
+    result = certificate_module.remove_current_user_root(cert)
+    expected_sha1 = hashlib.sha1(cert.read_bytes()).hexdigest().upper()
+    assert result["ok"] is True
+    assert calls == [["-user", "-delstore", "Root", expected_sha1]]
+    assert cert.is_file()
+
+
+def test_certutil_timeout_is_bounded_and_explicit(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(certificate_module, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(certificate_module, "_certutil", lambda: "certutil.exe")
+
+    def hanging_run(*args, **kwargs):
+        raise subprocess.TimeoutExpired(kwargs.get("args", args[0]), kwargs["timeout"])
+
+    monkeypatch.setattr(subprocess, "run", hanging_run)
+    result = certificate_module._run_certutil(["-user", "-store", "Root", "ABC"], timeout=0.01)
+    assert result["ok"] is False
+    assert result["timed_out"] is True
+    assert "超时" in result["message"]
+
+
+def test_certificate_manager_consent_and_state_transitions(tmp_path: Path) -> None:
     cert = tmp_path / "mitmproxy-ca-cert.cer"
     cert.write_bytes(b"fake certificate")
     trusted = False
-    calls: list[tuple[Path, int]] = []
+    provision_calls: list[Path] = []
+    remove_calls: list[Path] = []
 
     def checker(_path: Path) -> bool:
         return trusted
 
-    def provisioner(path: Path, hwnd: int) -> None:
+    def provisioner(path: Path, _hwnd: int) -> dict[str, bool]:
         nonlocal trusted
-        calls.append((path, hwnd))
+        provision_calls.append(path)
         trusted = True
+        return {"ok": True}
+
+    def remover(path: Path, _hwnd: int) -> dict[str, bool]:
+        nonlocal trusted
+        remove_calls.append(path)
+        trusted = False
+        # The generated CA file remains on disk after trust-store removal.
+        return {"ok": True}
 
     manager = WindowsCertificateManager(
         tmp_path,
         trust_checker=checker,
         provisioner=provisioner,
-        remover=lambda path, hwnd: path.unlink(),
+        remover=remover,
         platform_name="test",
     )
-    denied = manager.prepare(False, 12)
-    assert denied["state"] == "consent_required"
-    assert not calls
+
+    denied_prepare = manager.prepare(False, 12)
+    denied_remove = manager.remove(False, 12)
+    assert denied_prepare["state"] == "consent_required"
+    assert denied_remove["state"] == "consent_required"
+    assert not provision_calls and not remove_calls
+
     prepared = manager.prepare(True, 12)
     assert prepared["ok"] is True
-    assert calls == [(cert, 12)]
+    assert prepared["state"] == "trusted"
+    assert provision_calls == [cert]
+
+    repeated_prepare = manager.prepare(True, 12)
+    assert repeated_prepare["ok"] is True
+    assert repeated_prepare["state"] == "already_trusted"
+    assert provision_calls == [cert]
+
+    removed = manager.remove(True, 12)
+    assert removed["ok"] is True
+    assert removed["state"] == "removed"
+    assert removed["certificate"]["state"] == "untrusted"
+    assert remove_calls == [cert]
+    assert cert.is_file()
+
+    repeated_remove = manager.remove(True, 12)
+    assert repeated_remove["ok"] is True
+    assert repeated_remove["state"] == "removed"
+    assert remove_calls == [cert, cert]
+
+
+def test_certificate_manager_reports_missing_and_install_failure(tmp_path: Path) -> None:
+    missing = WindowsCertificateManager(tmp_path, platform_name="test")
+    assert missing.prepare(True)["state"] == "missing"
+
+    cert = tmp_path / "mitmproxy-ca-cert.cer"
+    cert.write_bytes(b"fake certificate")
+    manager = WindowsCertificateManager(
+        tmp_path,
+        trust_checker=lambda _path: False,
+        provisioner=lambda _path, _hwnd: {"ok": False, "stderr": "access denied"},
+        platform_name="test",
+    )
+    failed = manager.prepare(True)
+    assert failed["ok"] is False
+    assert failed["state"] == "install_failed"
+    assert "失败" in failed["message"]
+    assert failed["operation"]["ok"] is False
 
 
 class FakeProcess:
@@ -249,6 +401,7 @@ def test_supervisor_decodes_only_bounded_frame_records(tmp_path: Path) -> None:
                     "received_at": 1.0,
                     "connection_id": "c1",
                     "sequence": 2,
+                    "direction": "server",
                 }
             )
             + "\nGUANCE_DIAG {\"cookie\":\"secret\"}\n"
@@ -269,5 +422,234 @@ def test_supervisor_decodes_only_bounded_frame_records(tmp_path: Path) -> None:
         threading.Event().wait(0.01)
     supervisor.stop(0.5)
     assert frames and frames[0].payload == payload
+    assert frames[0].direction == "server"
     assert any(status.get("state") == "helper_diag" for status in statuses)
     assert all(status.get("cookie") != "secret" for status in statuses)
+
+
+@pytest.mark.parametrize("direction", ["client", "server"])
+def test_addon_emits_direction_without_filtering(direction: str, monkeypatch, capsys) -> None:
+    monkeypatch.setenv("GUANCE_ALLOWED_HOSTS", "game.example")
+    addon = capture_addon.GuanceAddon()
+    flow = SimpleNamespace(
+        id="connection-1",
+        request=SimpleNamespace(pretty_host="game.example"),
+        websocket=SimpleNamespace(
+            messages=[SimpleNamespace(content=b"payload", from_client=direction == "client")]
+        ),
+    )
+
+    addon.websocket_message(flow)
+
+    line = capsys.readouterr().out.strip()
+    assert line.startswith("GUANCE_FRAME ")
+    record = json.loads(line.removeprefix("GUANCE_FRAME "))
+    assert record["direction"] == direction
+    assert record["payload_b64"] == base64.b64encode(b"payload").decode("ascii")
+
+
+@pytest.mark.parametrize("invalid_direction", [None, "CLIENT", "peer", 1, {"value": "server"}])
+def test_supervisor_normalizes_invalid_direction_to_unknown(
+    tmp_path: Path, invalid_direction: object
+) -> None:
+    helper = tmp_path / "mitmdump.exe"
+    addon = tmp_path / "addon.py"
+    helper.write_bytes(b"stub")
+    addon.write_bytes(b"stub")
+    process = FakeProcess()
+    payload = b"payload"
+    process.stdout = io.BytesIO(
+        (
+            "GUANCE_FRAME "
+            + json.dumps(
+                {
+                    "host": "game.example",
+                    "payload_b64": base64.b64encode(payload).decode("ascii"),
+                    "received_at": 1.0,
+                    "connection_id": "c1",
+                    "sequence": 3,
+                    "direction": invalid_direction,
+                }
+            )
+            + "\n"
+        ).encode()
+    )
+    frames: list[SourceFrame] = []
+    supervisor = SubprocessCaptureSupervisor(
+        process_factory=lambda *args, **kwargs: process,
+        readiness_probe=lambda config, timeout: True,
+    )
+    config = CaptureConfig(helper, addon, tmp_path / "conf", max_frame_bytes=1024)
+    supervisor.start(config, frames.append, lambda _status: None)
+    assert supervisor.wait_ready(0.5)
+    for _ in range(20):
+        if frames:
+            break
+        threading.Event().wait(0.01)
+    supervisor.stop(0.5)
+
+    assert frames and frames[0].direction == "unknown"
+
+
+@pytest.mark.parametrize(
+    ("mode", "upstream"),
+    [
+        (CaptureMode.DIRECT, None),
+        (CaptureMode.UPSTREAM_HTTP, UpstreamProxy("127.0.0.1", 7897, kind="http")),
+        (CaptureMode.UPSTREAM_MIXED, UpstreamProxy("127.0.0.1", 7897, kind="mixed")),
+    ],
+)
+def test_runtime_modes_preserve_full_proxy_snapshot_on_stop(
+    tmp_path: Path, mode: CaptureMode, upstream: UpstreamProxy | None
+) -> None:
+    original = ProxySnapshot(
+        enabled=True,
+        server="127.0.0.1:7897",
+        auto_config_url="https://proxy.example/pac.js",
+        auto_detect=True,
+        bypass="localhost;127.0.0.1;<local>",
+    )
+    proxy = InMemoryProxyBackend(original)
+    service = RuntimeService(
+        paths(tmp_path),
+        options=RuntimeOptions(mode=mode, upstream=upstream, require_certificate=False),
+        capture=FakeCapture([]),
+        proxy=proxy,
+        certificate=FakeCertificate(),
+    )
+    assert service.start()["ok"] is True
+    assert proxy.current.enabled is True
+    assert proxy.current.server == "127.0.0.1:18080"
+    stopped = service.stop()
+    assert stopped["ok"] is True
+    assert proxy.current == original
+
+
+def test_runtime_no_proxy_snapshot_is_restored_exactly(tmp_path: Path) -> None:
+    original = ProxySnapshot(
+        enabled=False,
+        server="",
+        auto_config_url="",
+        auto_detect=False,
+        bypass="*.internal;<local>",
+    )
+    proxy = InMemoryProxyBackend(original)
+    service = RuntimeService(
+        paths(tmp_path),
+        options=RuntimeOptions(require_certificate=False),
+        capture=FakeCapture([]),
+        proxy=proxy,
+        certificate=FakeCertificate(),
+    )
+    assert service.start()["ok"] is True
+    assert service.stop()["ok"] is True
+    assert proxy.current == original
+
+
+def test_start_failure_cleans_lease_and_releases_instance_lock(tmp_path: Path) -> None:
+    proxy = InMemoryProxyBackend(ProxySnapshot(enabled=True, server="127.0.0.1:7897"))
+    service = RuntimeService(
+        paths(tmp_path),
+        options=RuntimeOptions(require_certificate=False),
+        capture=FakeCapture([], ready=False),
+        proxy=proxy,
+        certificate=FakeCertificate(),
+    )
+    result = service.start()
+    assert result["ok"] is False
+    assert not (tmp_path / "config" / "proxy-lease.json").exists()
+    assert service._instance_lock.held is False
+    # A later runtime can acquire the same lock after a failed start.
+    second = RuntimeService(
+        paths(tmp_path),
+        options=RuntimeOptions(require_certificate=False),
+        capture=FakeCapture([]),
+        proxy=proxy,
+        certificate=FakeCertificate(),
+    )
+    assert second.start()["ok"] is True
+    assert second.stop()["ok"] is True
+
+
+def test_stale_lease_recovers_only_when_proxy_is_still_applied(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    original = ProxySnapshot(enabled=True, server="127.0.0.1:7897", bypass="<local>")
+    applied = ProxySnapshot(enabled=True, server="127.0.0.1:18080", bypass="<local>")
+    proxy = InMemoryProxyBackend(applied)
+    store = ProxyLeaseStore(tmp_path / "config" / "proxy-lease.json")
+    lease = ProxyLease(
+        original_proxy=original,
+        applied_proxy=applied,
+        app_pid=987654,
+        helper_pid=987655,
+        target_host="127.0.0.1",
+        target_port=18080,
+        state="active",
+    )
+    store.save(lease)
+    monkeypatch.setattr("guance.application.runtime.service._pid_is_alive", lambda _pid: False)
+    service = RuntimeService(
+        paths(tmp_path),
+        options=RuntimeOptions(require_certificate=False),
+        capture=FakeCapture([]),
+        proxy=proxy,
+        certificate=FakeCertificate(),
+    )
+    result = service.recover_stale_proxy()
+    assert result["ok"] is True
+    assert proxy.current == original
+    assert store.load() is None
+    assert (tmp_path / "config" / "proxy-lease.journal.jsonl").exists()
+
+
+def test_stale_lease_does_not_overwrite_external_proxy_change(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    original = ProxySnapshot(enabled=True, server="127.0.0.1:7897")
+    applied = ProxySnapshot(enabled=True, server="127.0.0.1:18080")
+    external = ProxySnapshot(enabled=True, server="127.0.0.1:9999")
+    proxy = InMemoryProxyBackend(external)
+    store = ProxyLeaseStore(tmp_path / "config" / "proxy-lease.json")
+    lease = ProxyLease(
+        original_proxy=original,
+        applied_proxy=applied,
+        app_pid=987654,
+        target_host="127.0.0.1",
+        target_port=18080,
+        state="active",
+    )
+    store.save(lease)
+    monkeypatch.setattr("guance.application.runtime.service._pid_is_alive", lambda _pid: False)
+    service = RuntimeService(
+        paths(tmp_path),
+        options=RuntimeOptions(require_certificate=False),
+        capture=FakeCapture([]),
+        proxy=proxy,
+        certificate=FakeCertificate(),
+    )
+    result = service.recover_stale_proxy()
+    assert result["ok"] is False
+    assert result["error_code"] == "PROXY_RECOVERY_CONFLICT"
+    assert proxy.current == external
+    assert store.load() is not None
+    assert store.load().state == "conflict"
+
+
+def test_second_runtime_cannot_take_over_first_runtime_lease(tmp_path: Path) -> None:
+    proxy = InMemoryProxyBackend(ProxySnapshot(enabled=True, server="127.0.0.1:7897"))
+    first = RuntimeService(
+        paths(tmp_path),
+        options=RuntimeOptions(require_certificate=False),
+        capture=FakeCapture([]),
+        proxy=proxy,
+        certificate=FakeCertificate(),
+    )
+    second = RuntimeService(
+        paths(tmp_path),
+        options=RuntimeOptions(require_certificate=False),
+        capture=FakeCapture([]),
+        proxy=proxy,
+        certificate=FakeCertificate(),
+    )
+    assert first.start()["ok"] is True
+    blocked = second.start()
+    assert blocked["ok"] is False
+    assert blocked["error_code"] == "RUNTIME_ALREADY_ACTIVE"
+    assert first.stop()["ok"] is True

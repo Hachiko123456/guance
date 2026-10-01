@@ -5,8 +5,9 @@ Rectangle {
     property var cardData: ({rank: "A", suit: "♠", red: false, wild: false, joker: false, label: "♠A"})
     property bool compact: false
     property bool mini: false
-    implicitWidth: mini ? 38 : compact ? 47 : 86
-    implicitHeight: mini ? 52 : compact ? 65 : 122
+    property bool publicPlay: false
+    implicitWidth: publicPlay ? 28 : mini ? 38 : compact ? 47 : 86
+    implicitHeight: publicPlay ? 42 : mini ? 52 : compact ? 65 : 122
     radius: compact || mini ? 5 : 9
     color: "#FFFEFC"
     border.color: cardData.wild ? "#53AB88" : "#DFE5E5"
@@ -15,22 +16,27 @@ Rectangle {
     Accessible.name: cardData.label || "牌"
     readonly property color cardInk: cardData.red ? "#C34A43" : "#22363C"
     Text {
+        objectName: "cardRank"
         anchors.left: parent.left; anchors.top: parent.top
-        anchors.leftMargin: card.mini ? 5 : card.compact ? 6 : 10
-        anchors.topMargin: card.mini ? 3 : card.compact ? 4 : 7
+        anchors.leftMargin: card.publicPlay ? 3 : card.mini ? 5 : card.compact ? 6 : 10
+        anchors.topMargin: card.publicPlay ? 2 : card.mini ? 3 : card.compact ? 4 : 7
         text: card.cardData.rank
         font.family: card.cardData.joker ? Theme.family : "Georgia"
-        font.pixelSize: card.cardData.joker ? (card.mini ? 10 : card.compact ? 11 : 18) : card.mini ? 16 : card.compact ? 19 : 30
+        font.pixelSize: card.cardData.joker ? (card.mini ? 10 : card.compact ? 11 : 18) : card.publicPlay ? 14 : card.mini ? 16 : card.compact ? 19 : 30
         font.weight: Font.DemiBold
         color: card.cardInk
     }
     Text {
-        anchors.right: parent.right; anchors.bottom: parent.bottom
+        objectName: "cardSuit"
+        anchors.right: card.publicPlay ? undefined : parent.right
+        anchors.left: card.publicPlay ? parent.left : undefined
+        anchors.leftMargin: 3
+        anchors.bottom: parent.bottom
         anchors.rightMargin: card.mini ? 5 : 9
         anchors.bottomMargin: card.mini ? 2 : 6
         text: card.cardData.joker ? "✦" : card.cardData.suit
         font.family: "Segoe UI Symbol"
-        font.pixelSize: card.mini ? 19 : card.compact ? 27 : 49
+        font.pixelSize: card.publicPlay ? 17 : card.mini ? 19 : card.compact ? 27 : 49
         color: card.cardInk
     }
     Rectangle {

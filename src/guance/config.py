@@ -19,7 +19,9 @@ def app_paths() -> dict[str, Path]:
     data=Path(override) if override else Path(os.environ.get('LOCALAPPDATA',Path.home()/'AppData'/'Local'))/'Guance'
     root=project_root()
     return {'data_dir':data,'config_dir':data/'config','logs_dir':data/'logs',
-            'cert_dir':data/'certs','runtime_dir':root/'runtime',
+            # mitmproxy creates its capture CA in the same confdir used by the runtime.
+            # Keep certificate discovery and helper generation on one path.
+            'cert_dir':data/'config'/'mitmproxy','runtime_dir':root/'runtime',
             'exports_dir':data/'exports','models_dir':data/'models','root_dir':root}
 
 
@@ -39,8 +41,8 @@ def default_model_path(paths: dict[str, Path]) -> Path:
 
 
 def load_preferences(paths: dict[str, Path]) -> dict[str, Any]:
-    defaults={'theme':'system','floating':False,'model_path':'','inference_threads':2,
-              'advice_timeout_ms':2000,'top_n':3}
+    defaults={'theme':'system','floating':False,'floating_layout':{},'model_path':'','inference_threads':2,
+              'advice_timeout_ms':2000,'top_n':3,'debug_capture_enabled':True}
     p=paths['config_dir']/'preferences.json'
     try:
         obj=json.loads(p.read_text('utf8'))

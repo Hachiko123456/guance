@@ -7,8 +7,8 @@ Dialog {
     objectName: "consentDialog"
     modal: true
     closePolicy: Popup.CloseOnEscape
-    width: Math.min(560, parent.width - 48)
-    height: Math.min(570, parent.height - 32)
+    width: Math.min(560, Math.max(320, parent ? parent.width - 48 : 560))
+    height: Math.min(570, Math.max(420, parent ? parent.height - 32 : 570))
     anchors.centerIn: parent
     padding: 26
     onOpened: consent.checked = false
@@ -84,7 +84,7 @@ Dialog {
         RowLayout {
             Layout.fillWidth: true
             Text { text: "拒绝授权不会修改网络。"; color: Theme.muted; font.family: Theme.family; font.pixelSize: 11; Layout.fillWidth: true }
-            ActionButton { text: "暂不授权"; onClicked: dialog.reject() }
+            ActionButton { objectName: "cancelConsentButton"; text: "暂不授权"; onClicked: dialog.reject() }
             ActionButton {
                 objectName: "authorizeButton"
                 text: "同意并继续"; primary: true

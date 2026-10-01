@@ -105,19 +105,22 @@ def test_ui_006_exit_demo_clears_demo_state(ui) -> None:
     assert vm.phase == "idle"
 
 
-def test_ui_007_floating_window_is_unique_and_repeated_open_is_idempotent(ui) -> None:
+def test_ui_007_floating_window_hides_main_and_restores_it_on_close(ui) -> None:
     app, _engine, root, vm, _controller = ui
     floating = child(root, "floatingAdviceWindow")
     trigger = child(root, "floatingButton")
+    assert root.property("visible") is True
     assert floating.property("visible") is False
 
     click(trigger)
     app.processEvents()
-    click(trigger)
-    app.processEvents()
-    assert vm.floatingVisible is True
+    assert root.property("visible") is False
     assert floating.property("visible") is True
-    assert len(root.findChildren(QObject, "floatingAdviceWindow")) == 1
+
+    floating.close()
+    app.processEvents()
+    assert root.property("visible") is True
+    assert floating.property("visible") is False
 
 
 def test_ui_008_floating_close_syncs_state_and_reopens(ui) -> None:
