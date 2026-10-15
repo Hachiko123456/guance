@@ -6,7 +6,9 @@ exact production locations.
 """
 from __future__ import annotations
 
+import hashlib
 import json
+import sys
 from pathlib import Path
 import zipfile
 from typing import Any
@@ -405,7 +407,89 @@ def test_debug_frame_recorder_exposes_waiting_status_and_live_game_metadata(tmp_
 
     recorder.close()
     closed = json.loads(status_path.read_text(encoding="utf-8"))
+    assert closed["schema"] == "guance-capture-closed-sidecar-v1"
     assert closed["state"] == "closed"
+    assert closed["producer"] == "guance.DebugFrameRecorder"
+    assert closed["producer_version"] == "1"
+    assert closed["protocol_identity"] == "TencentDaguandanObservedProtocol.v20261014"
+    assert closed["capture_id"] == path.parent.name
+    assert closed["source_filename"] == "frames.jsonl"
+    assert closed["source_bytes"] == path.stat().st_size
+    assert closed["source_sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
+    assert closed["frames"] == 1
+    assert closed["directions"] == {"server": 1}
+    assert closed["connection_epochs"] == [{
+        "ordinal": 1, "start_sequence": 7, "end_sequence": 7,
+        "frames": 1, "directions": {"server": 1},
+    }]
+    assert closed["final_sequence"] == 7
+    assert closed["close_reason"] == "recorder_closed_with_incomplete_game"
+    assert closed["closed_at"]
+    assert not status_path.with_suffix(".tmp").exists()
+
+
+def test_debug_frame_recorder_closed_sidecar_is_bound_after_source_close(tmp_path: Path) -> None:
+    recorder = DebugFrameRecorder(tmp_path / "captures")
+    path = recorder.start()
+    recorder.append(SourceFrame(
+        host="hlxyxws.huanle.qq.com", payload=b"first", received_at=1.0,
+        connection_id="conn-1", sequence=1, direction="client",
+    ))
+    recorder.begin_game("game-0001", 1)
+    recorder.append(SourceFrame(
+        host="hlxyxws.huanle.qq.com", payload=b"second", received_at=2.0,
+        connection_id="conn-1", sequence=2, direction="server",
+    ))
+    recorder.finish_game("game-0001", 2)
+    recorder.close()
+    sidecar = json.loads((path.parent / "capture_status.json").read_text(encoding="utf-8"))
+    assert sidecar["state"] == "closed"
+    assert sidecar["source_bytes"] == path.stat().st_size
+    assert sidecar["source_sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
+    assert sidecar["directions"] == {"client": 1, "server": 1}
+    assert sidecar["connection_epochs"] == [{
+        "ordinal": 1, "start_sequence": 1, "end_sequence": 2,
+        "frames": 2, "directions": {"client": 1, "server": 1},
+    }]
+    assert sidecar["final_sequence"] == 2
+    assert sidecar["close_reason"] == "recorder_closed"
+    assert not (path.parent / "capture_status.tmp").exists()
+    assert sidecar["games"] == [{
+        "game_id": "game-0001", "status": "settled", "start_frame_index": 0,
+        "end_frame_index": 1, "start_sequence": 1, "end_sequence": 2,
+    }]
+    sidecar_bytes = (path.parent / "capture_status.json").read_bytes()
+    recorder.close()
+    assert (path.parent / "capture_status.json").read_bytes() == sidecar_bytes
+    text = json.dumps(sidecar, sort_keys=True).lower()
+    assert "payload" not in text and "cookie" not in text and "authorization" not in text
+
+
+def test_debug_frame_recorder_never_writes_closed_sidecar_after_source_close_failure(tmp_path: Path) -> None:
+    recorder = DebugFrameRecorder(tmp_path / "captures")
+    path = recorder.start()
+    recorder.append(SourceFrame(
+        host="hlxyxws.huanle.qq.com", payload=b"frame", received_at=1.0,
+        connection_id="conn-1", sequence=1, direction="server",
+    ))
+    underlying = recorder._stream
+
+    class FailingStream:
+        def flush(self):
+            raise OSError("synthetic close failure")
+
+        def close(self):
+            if underlying is not None:
+                underlying.close()
+
+    recorder._stream = FailingStream()
+    recorder.close()
+    assert underlying is None or underlying.closed
+    sidecar = json.loads((path.parent / "capture_status.json").read_text(encoding="utf-8"))
+    assert sidecar["state"] == "close_failed"
+    assert sidecar["close_reason"] == "source_close_failed"
+    assert sidecar["source_sha256"] == ""
+    assert sidecar["closed_at"] == ""
 
 
 def test_controller_preserves_first_engine_error_over_repeated_paused_updates(tmp_path: Path) -> None:
@@ -528,3 +612,46 @@ def test_diagnostics_export_failure_is_observable(tmp_path: Path) -> None:
         and "OSError" in item.get("message", "")
         for item in vm.logs
     )
+
+
+def test_phase6_controller_preserves_experimental_unavailable_metadata_without_ready(tmp_path: Path) -> None:
+    controller, vm, _runtime, _model = build_controller(tmp_path)
+    try:
+        controller._on_model_status({
+            "model_status": "unavailable",
+            "error_code": "GUANDAN_STATE_UNAVAILABLE",
+            "message": "current public state unsupported",
+            "metadata": {
+                "status": "unavailable", "provider": "guandan_marvel_v2",
+                "backend": "guandan", "runtime": "torch-cpu",
+                "model_version": "MARVEL-V2-v1.3-iter000100",
+                "model_sha256": "4" * 64, "deployment_fingerprint": "3" * 64,
+                "score_kind": "marvel_v2_policy_path_score",
+                "classification": "evaluation_only", "experimental": True,
+                "production_ready": False, "strength_claim": False,
+                "public_self_supported": False,
+                "capabilities": {"next_token_policy": True},
+            },
+        })
+        assert vm.modelState == "unavailable"
+        assert vm.modelMetadata["provider"] == "guandan_marvel_v2"
+        assert vm.modelMetadata["experimental"] is True
+        assert vm.modelMetadata["production_ready"] is False
+        assert vm.adviceCandidates == []
+        assert vm.phase != "error"
+    finally:
+        controller.close()
+
+
+def test_frozen_no_capture_package_does_not_fallback_to_system_helper(
+        tmp_path: Path, monkeypatch) -> None:
+    controller, _vm, _runtime, _model = build_controller(tmp_path)
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+
+    options = controller._mode_options()
+
+    expected_runtime = controller.paths["runtime_dir"] / "mitmproxy"
+    assert options.helper_path == expected_runtime / "mitmdump.exe"
+    assert options.addon_path == expected_runtime / "addon.py"
+    assert not options.helper_path.is_file()
+    assert str(options.helper_path) != r"C:\Program Files\mitmproxy\bin\mitmdump.exe"

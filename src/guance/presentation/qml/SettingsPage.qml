@@ -12,8 +12,8 @@ ScrollView {
     FileDialog {
         id: modelDialog
         objectName: "modelFileDialog"
-        title: "选择 FableDan 模型"
-        nameFilters: ["FableDan 模型 (*.npz)", "所有文件 (*)"]
+        title: "选择模型包或 legacy 模型"
+        nameFilters: ["模型清单 (manifest.json)", "legacy NumPy 模型 (*.npz)", "模型文件 (*)"]
         onAccepted: viewModel.request_model_import(file)
     }
 
@@ -62,16 +62,49 @@ ScrollView {
         }
     }
 
+    function modelMetadataValue(key, fallback) {
+        var metadata = viewModel.modelMetadata
+        if (!metadata || metadata[key] === undefined || metadata[key] === "")
+            return fallback
+        return String(metadata[key])
+    }
+
+    function modelBooleanLabel(key, trueLabel, falseLabel) {
+        var metadata = viewModel.modelMetadata || {}
+        if (metadata[key] === true) return trueLabel
+        if (metadata[key] === false) return falseLabel
+        return "未声明"
+    }
+
+    function modelCapabilitiesText() {
+        var metadata = viewModel.modelMetadata || {}
+        var capabilities = metadata.capabilities || {}
+        var enabled = []
+        for (var key in capabilities) {
+            if (capabilities[key]) enabled.push(key)
+        }
+        return enabled.length ? enabled.join("、") : "未声明"
+    }
+
     ColumnLayout {
         width: page.availableWidth
         spacing: 18
         Text { text: "设置"; color: Theme.ink; font.family: Theme.family; font.pixelSize: 26; font.weight: Font.DemiBold }
         Text { text: "把复杂设置留在这里，助手页只保留对局需要的信息。"; color: Theme.muted; font.family: Theme.family; font.pixelSize: 13 }
         Rectangle {
-            Layout.fillWidth: true; implicitHeight: 130; radius: 14; color: Theme.panel; border.color: Theme.line
-            ColumnLayout { anchors.fill: parent; anchors.margins: 20; spacing: 8
+            Layout.fillWidth: true; implicitHeight: 306; radius: 14; color: Theme.panel; border.color: Theme.line
+            ColumnLayout { anchors.fill: parent; anchors.margins: 20; spacing: 7
                 Text { text: "模型"; color: Theme.ink; font.family: Theme.family; font.pixelSize: 15; font.bold: true }
-                Text { text: viewModel.modelSummary; color: Theme.muted; font.family: Theme.family; font.pixelSize: 12; Layout.fillWidth: true }
+                Text { text: viewModel.modelSummary; color: Theme.muted; font.family: Theme.family; font.pixelSize: 12; Layout.fillWidth: true; elide: Text.ElideRight }
+                Text { objectName: "modelStatusField"; text: "状态：" + modelMetadataValue("status", viewModel.modelState); color: Theme.faint; font.family: Theme.family; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight }
+                Text { objectName: "modelProviderField"; text: "提供方：" + modelMetadataValue("provider", "未声明") + "    后端：" + modelMetadataValue("backend", "未声明"); color: Theme.faint; font.family: Theme.family; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight }
+                Text { objectName: "modelRuntimeField"; text: "运行时：" + modelMetadataValue("runtime", "未声明") + " " + modelMetadataValue("runtime_version", "") + "    版本：" + modelMetadataValue("model_version", "未声明"); color: Theme.faint; font.family: Theme.family; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight }
+                Text { objectName: "modelCapabilitiesField"; text: "能力：" + modelCapabilitiesText(); color: Theme.faint; font.family: Theme.family; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight }
+                Text { objectName: "modelExperimentalField"; text: "类型：" + modelBooleanLabel("experimental", "实验性", "常规") + " / " + modelMetadataValue("classification", "未声明") + "    生产就绪：" + modelBooleanLabel("production_ready", "是", "否"); color: Theme.faint; font.family: Theme.family; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight }
+                Text { objectName: "modelEvaluationField"; text: "正式评估：" + modelMetadataValue("formal_evaluation_status", "未声明") + "    Champion：" + modelMetadataValue("champion_status", "未声明"); color: Theme.faint; font.family: Theme.family; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight }
+                Text { objectName: "modelScoreField"; text: "分数：" + (modelMetadataValue("score_kind", "未声明").indexOf("policy_path") >= 0 ? "策略/路径分数（非胜率）" : modelMetadataValue("score_kind", "未声明")); color: Theme.faint; font.family: Theme.family; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight }
+                Text { objectName: "modelFingerprintField"; text: "模型指纹：" + modelMetadataValue("fingerprint", "未声明"); color: Theme.faint; font.family: Theme.family; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight }
+                Text { objectName: "modelDeploymentFingerprintField"; text: "部署指纹：" + modelMetadataValue("deployment_fingerprint", "未声明"); color: Theme.faint; font.family: Theme.family; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight }
                 ActionButton { objectName: "importModelButton"; text: "导入模型"; subtle: true; onClicked: modelDialog.open() }
             }
         }

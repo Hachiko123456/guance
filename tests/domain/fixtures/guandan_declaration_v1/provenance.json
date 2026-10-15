@@ -1,0 +1,514 @@
+{
+  "schema": "guance-declaration-fixture-provenance-v1",
+  "copied_from": "D:/project/guandan/guance_phase2_declaration_handoff",
+  "copied_files": {
+    "guandan_declaration_rules_v1.json": {
+      "sha256": "29772a3ab8a61d9f603e8d57f2432abdec6f5e591927b94a7beb87fc74a77287",
+      "bytes": 721778
+    },
+    "guandan_declaration_golden_vectors_v1.json": {
+      "sha256": "e183a6e4a9cbf01dffe424d4054ebab433f6107704680eab6e783607c812c7ae",
+      "bytes": 1464421
+    },
+    "SHA256SUMS": {
+      "sha256": "d47182ad89d5b24913e0ca1b549b3b7e364ee7d42579ddc168c9a6895b3f0789",
+      "bytes": 519
+    }
+  },
+  "authority_source_commit": "8ea264c1bde4b8faac24560afa27d37955232028",
+  "rules_semantic_sha256": "96b1fdccf795af4e51361e8bd155d5e46c663d50ea1d1dda22a3a6021ce663dc",
+  "vectors_semantic_sha256": "8573a4def03f9bd72d0bfddbca136ec3bec5ff0255fb7b2b578cffb012f6c739",
+  "exporter_sha256": "61cce080052ec4208fd86fac78e847b9a93fab88f9a7ae09a18d2d7ef05823d6",
+  "handoff_artifact_commit": null,
+  "handoff_artifact_git_status": "untracked",
+  "card_mapping_source_sha256": "c9284060e526f210045fe60119d50aa8456f7638afe8b0c55dddfd7c32d047f0",
+  "card_mapping_pairs_sha256": "f9fd8795ba14147923c74b2d3f85ea728c2f8ad62aa68f92c7e52f495372fa38",
+  "card_mapping_pair_count": 108,
+  "four_kings": {
+    "guandan_card_ids": [
+      52,
+      53,
+      106,
+      107
+    ],
+    "guance_storage_codes": [
+      14,
+      270,
+      15,
+      271
+    ],
+    "guance_action_codes": [
+      14,
+      15,
+      270,
+      271
+    ]
+  },
+  "not_copied": [
+    "tools/export_guance_declaration_contract.py",
+    "Guandan source",
+    "native binary",
+    "checkpoint",
+    "capture",
+    "games",
+    "hidden hands",
+    "weights"
+  ],
+  "card_mapping_pairs": [
+    {
+      "guandan_card_id": 0,
+      "guance_physical_code": 51
+    },
+    {
+      "guandan_card_id": 1,
+      "guance_physical_code": 67
+    },
+    {
+      "guandan_card_id": 2,
+      "guance_physical_code": 35
+    },
+    {
+      "guandan_card_id": 3,
+      "guance_physical_code": 19
+    },
+    {
+      "guandan_card_id": 4,
+      "guance_physical_code": 52
+    },
+    {
+      "guandan_card_id": 5,
+      "guance_physical_code": 68
+    },
+    {
+      "guandan_card_id": 6,
+      "guance_physical_code": 36
+    },
+    {
+      "guandan_card_id": 7,
+      "guance_physical_code": 20
+    },
+    {
+      "guandan_card_id": 8,
+      "guance_physical_code": 53
+    },
+    {
+      "guandan_card_id": 9,
+      "guance_physical_code": 69
+    },
+    {
+      "guandan_card_id": 10,
+      "guance_physical_code": 37
+    },
+    {
+      "guandan_card_id": 11,
+      "guance_physical_code": 21
+    },
+    {
+      "guandan_card_id": 12,
+      "guance_physical_code": 54
+    },
+    {
+      "guandan_card_id": 13,
+      "guance_physical_code": 70
+    },
+    {
+      "guandan_card_id": 14,
+      "guance_physical_code": 38
+    },
+    {
+      "guandan_card_id": 15,
+      "guance_physical_code": 22
+    },
+    {
+      "guandan_card_id": 16,
+      "guance_physical_code": 55
+    },
+    {
+      "guandan_card_id": 17,
+      "guance_physical_code": 71
+    },
+    {
+      "guandan_card_id": 18,
+      "guance_physical_code": 39
+    },
+    {
+      "guandan_card_id": 19,
+      "guance_physical_code": 23
+    },
+    {
+      "guandan_card_id": 20,
+      "guance_physical_code": 56
+    },
+    {
+      "guandan_card_id": 21,
+      "guance_physical_code": 72
+    },
+    {
+      "guandan_card_id": 22,
+      "guance_physical_code": 40
+    },
+    {
+      "guandan_card_id": 23,
+      "guance_physical_code": 24
+    },
+    {
+      "guandan_card_id": 24,
+      "guance_physical_code": 57
+    },
+    {
+      "guandan_card_id": 25,
+      "guance_physical_code": 73
+    },
+    {
+      "guandan_card_id": 26,
+      "guance_physical_code": 41
+    },
+    {
+      "guandan_card_id": 27,
+      "guance_physical_code": 25
+    },
+    {
+      "guandan_card_id": 28,
+      "guance_physical_code": 58
+    },
+    {
+      "guandan_card_id": 29,
+      "guance_physical_code": 74
+    },
+    {
+      "guandan_card_id": 30,
+      "guance_physical_code": 42
+    },
+    {
+      "guandan_card_id": 31,
+      "guance_physical_code": 26
+    },
+    {
+      "guandan_card_id": 32,
+      "guance_physical_code": 59
+    },
+    {
+      "guandan_card_id": 33,
+      "guance_physical_code": 75
+    },
+    {
+      "guandan_card_id": 34,
+      "guance_physical_code": 43
+    },
+    {
+      "guandan_card_id": 35,
+      "guance_physical_code": 27
+    },
+    {
+      "guandan_card_id": 36,
+      "guance_physical_code": 60
+    },
+    {
+      "guandan_card_id": 37,
+      "guance_physical_code": 76
+    },
+    {
+      "guandan_card_id": 38,
+      "guance_physical_code": 44
+    },
+    {
+      "guandan_card_id": 39,
+      "guance_physical_code": 28
+    },
+    {
+      "guandan_card_id": 40,
+      "guance_physical_code": 61
+    },
+    {
+      "guandan_card_id": 41,
+      "guance_physical_code": 77
+    },
+    {
+      "guandan_card_id": 42,
+      "guance_physical_code": 45
+    },
+    {
+      "guandan_card_id": 43,
+      "guance_physical_code": 29
+    },
+    {
+      "guandan_card_id": 44,
+      "guance_physical_code": 49
+    },
+    {
+      "guandan_card_id": 45,
+      "guance_physical_code": 65
+    },
+    {
+      "guandan_card_id": 46,
+      "guance_physical_code": 33
+    },
+    {
+      "guandan_card_id": 47,
+      "guance_physical_code": 17
+    },
+    {
+      "guandan_card_id": 48,
+      "guance_physical_code": 50
+    },
+    {
+      "guandan_card_id": 49,
+      "guance_physical_code": 66
+    },
+    {
+      "guandan_card_id": 50,
+      "guance_physical_code": 34
+    },
+    {
+      "guandan_card_id": 51,
+      "guance_physical_code": 18
+    },
+    {
+      "guandan_card_id": 52,
+      "guance_physical_code": 14
+    },
+    {
+      "guandan_card_id": 53,
+      "guance_physical_code": 15
+    },
+    {
+      "guandan_card_id": 54,
+      "guance_physical_code": 307
+    },
+    {
+      "guandan_card_id": 55,
+      "guance_physical_code": 323
+    },
+    {
+      "guandan_card_id": 56,
+      "guance_physical_code": 291
+    },
+    {
+      "guandan_card_id": 57,
+      "guance_physical_code": 275
+    },
+    {
+      "guandan_card_id": 58,
+      "guance_physical_code": 308
+    },
+    {
+      "guandan_card_id": 59,
+      "guance_physical_code": 324
+    },
+    {
+      "guandan_card_id": 60,
+      "guance_physical_code": 292
+    },
+    {
+      "guandan_card_id": 61,
+      "guance_physical_code": 276
+    },
+    {
+      "guandan_card_id": 62,
+      "guance_physical_code": 309
+    },
+    {
+      "guandan_card_id": 63,
+      "guance_physical_code": 325
+    },
+    {
+      "guandan_card_id": 64,
+      "guance_physical_code": 293
+    },
+    {
+      "guandan_card_id": 65,
+      "guance_physical_code": 277
+    },
+    {
+      "guandan_card_id": 66,
+      "guance_physical_code": 310
+    },
+    {
+      "guandan_card_id": 67,
+      "guance_physical_code": 326
+    },
+    {
+      "guandan_card_id": 68,
+      "guance_physical_code": 294
+    },
+    {
+      "guandan_card_id": 69,
+      "guance_physical_code": 278
+    },
+    {
+      "guandan_card_id": 70,
+      "guance_physical_code": 311
+    },
+    {
+      "guandan_card_id": 71,
+      "guance_physical_code": 327
+    },
+    {
+      "guandan_card_id": 72,
+      "guance_physical_code": 295
+    },
+    {
+      "guandan_card_id": 73,
+      "guance_physical_code": 279
+    },
+    {
+      "guandan_card_id": 74,
+      "guance_physical_code": 312
+    },
+    {
+      "guandan_card_id": 75,
+      "guance_physical_code": 328
+    },
+    {
+      "guandan_card_id": 76,
+      "guance_physical_code": 296
+    },
+    {
+      "guandan_card_id": 77,
+      "guance_physical_code": 280
+    },
+    {
+      "guandan_card_id": 78,
+      "guance_physical_code": 313
+    },
+    {
+      "guandan_card_id": 79,
+      "guance_physical_code": 329
+    },
+    {
+      "guandan_card_id": 80,
+      "guance_physical_code": 297
+    },
+    {
+      "guandan_card_id": 81,
+      "guance_physical_code": 281
+    },
+    {
+      "guandan_card_id": 82,
+      "guance_physical_code": 314
+    },
+    {
+      "guandan_card_id": 83,
+      "guance_physical_code": 330
+    },
+    {
+      "guandan_card_id": 84,
+      "guance_physical_code": 298
+    },
+    {
+      "guandan_card_id": 85,
+      "guance_physical_code": 282
+    },
+    {
+      "guandan_card_id": 86,
+      "guance_physical_code": 315
+    },
+    {
+      "guandan_card_id": 87,
+      "guance_physical_code": 331
+    },
+    {
+      "guandan_card_id": 88,
+      "guance_physical_code": 299
+    },
+    {
+      "guandan_card_id": 89,
+      "guance_physical_code": 283
+    },
+    {
+      "guandan_card_id": 90,
+      "guance_physical_code": 316
+    },
+    {
+      "guandan_card_id": 91,
+      "guance_physical_code": 332
+    },
+    {
+      "guandan_card_id": 92,
+      "guance_physical_code": 300
+    },
+    {
+      "guandan_card_id": 93,
+      "guance_physical_code": 284
+    },
+    {
+      "guandan_card_id": 94,
+      "guance_physical_code": 317
+    },
+    {
+      "guandan_card_id": 95,
+      "guance_physical_code": 333
+    },
+    {
+      "guandan_card_id": 96,
+      "guance_physical_code": 301
+    },
+    {
+      "guandan_card_id": 97,
+      "guance_physical_code": 285
+    },
+    {
+      "guandan_card_id": 98,
+      "guance_physical_code": 305
+    },
+    {
+      "guandan_card_id": 99,
+      "guance_physical_code": 321
+    },
+    {
+      "guandan_card_id": 100,
+      "guance_physical_code": 289
+    },
+    {
+      "guandan_card_id": 101,
+      "guance_physical_code": 273
+    },
+    {
+      "guandan_card_id": 102,
+      "guance_physical_code": 306
+    },
+    {
+      "guandan_card_id": 103,
+      "guance_physical_code": 322
+    },
+    {
+      "guandan_card_id": 104,
+      "guance_physical_code": 290
+    },
+    {
+      "guandan_card_id": 105,
+      "guance_physical_code": 274
+    },
+    {
+      "guandan_card_id": 106,
+      "guance_physical_code": 270
+    },
+    {
+      "guandan_card_id": 107,
+      "guance_physical_code": 271
+    }
+  ],
+  "card_mapping_schema": "guance-guandan-card-mapping-v1",
+  "card_mapping_validation": {
+    "card_count": 108,
+    "guance_codes_unique": true,
+    "guandan_ids_unique": true,
+    "bijection": true,
+    "forward_inverse_roundtrip": true
+  },
+  "card_mapping_level_rank_mapping": {
+    "1": 14,
+    "2": 15,
+    "3": 3,
+    "4": 4,
+    "5": 5,
+    "6": 6,
+    "7": 7,
+    "8": 8,
+    "9": 9,
+    "10": 10,
+    "11": 11,
+    "12": 12,
+    "13": 13
+  }
+}

@@ -92,22 +92,32 @@ SourceFrame -> ProtocolEvent -> GameState -> GameObservation -> AdviceResult
 
 结算手牌只用于离线一致性检查，不能穿过 `GameObservation`。
 
-## 基线与待合并实现
+## 当前 experimental candidate 与限制
 
-| 边界 | 基线 `957b9c3` | 本地待合并修正 |
-|---|---|---|
-| 本人座位 | 直接读取发牌字段，存在解释风险 | 未确认座位、牌引用证据与人工回退 |
-| 公开桌面快照 | state 摘要与 observation | 更完整桌面快照、记牌器、结束名次 |
-| 输入元数据 | SourceFrame 无 direction，SourceMeta 无 message_index | 增加方向/索引并统一消费者 |
-| 退出与崩溃恢复 | 需核对 bootstrap 与 runtime 清理接线 | 单实例、持久租约、启动恢复、aboutToQuit 清理 |
-| 用户证书路径 | 用户数据目录下 certs | 与 helper confdir 统一 |
-| 浮窗布局 | 原有浮窗 | 两列出牌、固定记牌器、自动尺寸；仍未完成验收 |
+当前源码候选已经包含以下分层能力：
 
-本次文档/Git 整理不提交这些业务修正。不应仅凭文档说明在基线部署真实采集。
+- 以确认的座位、牌引用和公开事件驱动安全状态重建；
+- 带 direction、message/sub-index 和 connection epoch 的协议元数据；
+- 公开桌面快照、记牌器、结束名次以及与主窗口共享状态的两列浮窗；
+- 单实例、持久 proxy lease、启动恢复和 `aboutToQuit` 清理；
+- provider-neutral 模型端口、独立 worker、显式 bundle identity 与 no-fallback 生命周期；
+- bounded diagnostics 和私有 capture 到公开+self canonical decision 的 fail-closed 转换边界。
+
+模型选择由 Controller 事务代次和 ModelService epoch 双重隔离。确认新选择后，旧 client 先失去提交与回调资格，再执行路径解析、preferences 原子保存、client 创建和加载；任何步骤失败都保持 active source 为空且不回退旧/default provider。requested、persisted、active source 分别记录；Qt 队列按选择代次丢弃旧 status/result。完全不可写磁盘时只保证当前进程 fail-closed，不宣称跨进程持久化。
+
+这些能力只属于 local experimental/evaluation-only candidate。仍未完成或明确不可用的边界包括：
+
+- full live coverage 仍为 `BLOCKED`，且没有 real live V2 positive artifact；
+- anti-tribute、ambiguous declaration 和跨 connection previous-result 不受支持并 fail closed；
+- no-capture frozen package 不提供本地网络 capture capability；
+- external MARVEL 不随包提供 Torch、checkpoint、Guandan source 或 native runtime，因此保持 unavailable/no fallback；
+- redistribution、第三方 notice 和 FableDan artifact rights 尚未完成独立审查。
+
+`production_ready=false`，不得把 policy/path score 描述为胜率，也不得声明 champion 或 production release。
 
 ## 构建边界
 
-PyInstaller 通过 [Guance.spec](../Guance.spec) 收集 QML、必要 Qt 插件、模型和采集 runtime。源码包、模型资产、用户配置和每台机器的证书状态是不同生命周期，不能只复制 exe 代替完整 onedir 目录。
+PyInstaller 通过 [Guance.spec](../Guance.spec) 收集应用 QML、受控 Qt/shiboken/CRT 依赖和明确允许的本地模型输入。Candidate 9 的 evaluation-only no-capture 构建显式排除 `runtime/mitmproxy`，即使该目录完全不存在也必须能够完成 spec evaluation 和构建；包内 capture capability 因此明确 unavailable。源码/development capture 模式可以使用外部 prepared helper，但只有独立兼容 runtime、完整验收和再分发审查完成后，才可以讨论把 helper 纳入其他候选。源码、模型资产、用户配置、证书和 frozen onedir package 属于不同生命周期，不能只复制 exe，也不能把本地私有输入提交到 Git。
 
 ## 相关入口
 
@@ -115,4 +125,7 @@ PyInstaller 通过 [Guance.spec](../Guance.spec) 收集 QML、必要 Qt 插件�
 - [跨层契约](INTEGRATION_CONTRACT.md)
 - [构建](BUILD.md)
 - [安全](SECURITY.md)
+- [自动训练数据契约](TRAINING_DATA.md)
 - [验收标准](ACCEPTANCE_STANDARD.md)
+
+- [模型后端架构](MODEL_BACKENDS.md)

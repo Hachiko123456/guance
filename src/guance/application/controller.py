@@ -14,24 +14,40 @@ import sys
 import threading
 import time
 from typing import Any
+from collections.abc import Callable
 
 from guance.config import (
     app_paths,
-    default_model_path,
+    default_model_source,
     ensure_app_paths,
     load_preferences,
     save_preferences,
 )
-from guance.contracts import EngineUpdate, SourceFrame
-from guance.domain.session import SessionEngine
+from guance.contracts import CanonicalAdviceResult, EngineUpdate, ModelStatusSnapshot, SourceFrame
+from guance.domain.session import AggregateParser, SessionEngine
 from guance.diagnostics import DiagnosticLog
-from guance.infrastructure.capture.diagnostics import BoundedDiagnostics
-from guance.infrastructure.model.client import InferenceClient
-from guance.infrastructure.protocol.saved_capture import iter_game_frames
-from guance.infrastructure.windows.certificate import WindowsCertificateManager
-from guance.infrastructure.windows.proxy import WindowsProxyBackend
-from guance.application.runtime.service import RuntimeOptions, RuntimeService
-from guance.ports.capture import CaptureMode, RuntimePaths, UpstreamProxy
+from guance.application.model_service import ModelService
+from guance.application.runtime.service import RuntimeOptions
+from guance.ports.capture import CaptureMode, ProxySnapshot, RuntimePaths, UpstreamProxy
+from guance.ports.model import ModelClientFactory
+
+# Test/embedding compatibility hook; production supplies factories from bootstrap.
+TrainingDataRecorder = None
+
+
+class _NoLiveSubsetProvider:
+    def adapt_event(self, event: object, _state: object, _session_id: str):
+        return (event,)
+    def observe_applied(self, _event: object, _state: object, _session_id: str) -> None:
+        return None
+    def reset_session(self) -> None:
+        return None
+    def bind_capture(self, _capture_id: str) -> None:
+        return None
+    def unbind_capture(self) -> None:
+        return None
+    def drain_decisions(self) -> tuple[object, ...]:
+        return ()
 
 
 class DebugCaptureError(RuntimeError):
@@ -47,6 +63,11 @@ class DebugFrameRecorder:
     """
 
     MAX_BYTES = 256 * 1024 * 1024
+    SIDECAR_SCHEMA = "guance-capture-closed-sidecar-v1"
+    CAPTURE_SCHEMA = "guance-debug-frame-jsonl-v1"
+    PRODUCER = "guance.DebugFrameRecorder"
+    PRODUCER_VERSION = "1"
+    PROTOCOL_IDENTITY = "TencentDaguandanObservedProtocol.v20261014"
 
     def __init__(self, root: Path) -> None:
         self.root = Path(root)
@@ -61,6 +82,9 @@ class DebugFrameRecorder:
         self._host_counts: dict[str, int] = {}
         self._games: dict[str, dict[str, Any]] = {}
         self._current_game_id = ""
+        self._connection_epochs: list[dict[str, Any]] = []
+        self._current_connection_id = ""
+        self._final_sequence: int | None = None
 
     @property
     def enabled(self) -> bool:
@@ -91,21 +115,54 @@ class DebugFrameRecorder:
         self._host_counts = {}
         self._games = {}
         self._current_game_id = ""
+        self._connection_epochs = []
+        self._current_connection_id = ""
+        self._final_sequence = None
         self._write_status("waiting_for_frames")
         return path
 
-    def _write_status(self, state: str) -> None:
-        """Persist bounded live capture status without raw payloads."""
+    def _write_status(self, state: str, *, close_reason: str = "") -> None:
+        """Atomically persist bounded capture status without source contents."""
         if self.session_dir is None or self.status_path is None:
             return
+        source_sha256 = ""
+        source_bytes = self._bytes_written
+        closed_at = ""
+        if state == "closed":
+            if self.path is None or not self.path.is_file():
+                return
+            try:
+                digest = hashlib.sha256()
+                source_bytes = 0
+                with self.path.open("rb") as stream:
+                    for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                        source_bytes += len(chunk)
+                        digest.update(chunk)
+                source_sha256 = digest.hexdigest()
+            except OSError:
+                return
+            closed_at = datetime.now().astimezone().isoformat(timespec="seconds")
         value = {
+            "schema": self.SIDECAR_SCHEMA,
             "schema_version": 1,
+            "capture_schema": self.CAPTURE_SCHEMA,
+            "producer": self.PRODUCER,
+            "producer_version": self.PRODUCER_VERSION,
+            "protocol_identity": self.PROTOCOL_IDENTITY,
+            "capture_id": self.session_dir.name,
+            "source_filename": self.path.name if self.path is not None else "frames.jsonl",
+            "source_sha256": source_sha256,
+            "source_bytes": source_bytes,
             "state": str(state),
             "started_at": self.session_dir.name,
+            "closed_at": closed_at,
+            "close_reason": str(close_reason),
             "frames": self._frame_count,
             "bytes": self._bytes_written,
             "directions": dict(sorted(self._direction_counts.items())),
             "hosts": dict(sorted(self._host_counts.items())),
+            "connection_epochs": [dict(item) for item in self._connection_epochs],
+            "final_sequence": self._final_sequence,
             "current_game_id": self._current_game_id,
             "games": [dict(item) for item in self._games.values()],
         }
@@ -149,6 +206,23 @@ class DebugFrameRecorder:
         self._frame_count += 1
         direction = str(frame.direction)
         self._direction_counts[direction] = self._direction_counts.get(direction, 0) + 1
+        connection_id = str(frame.connection_id)
+        if not self._connection_epochs or connection_id != self._current_connection_id:
+            self._current_connection_id = connection_id
+            self._connection_epochs.append({
+                "ordinal": len(self._connection_epochs) + 1,
+                "start_sequence": int(frame.sequence),
+                "end_sequence": int(frame.sequence),
+                "frames": 0,
+                "directions": {},
+            })
+        epoch = self._connection_epochs[-1]
+        epoch["end_sequence"] = int(frame.sequence)
+        epoch["frames"] = int(epoch["frames"]) + 1
+        epoch_directions = dict(epoch["directions"])
+        epoch_directions[direction] = epoch_directions.get(direction, 0) + 1
+        epoch["directions"] = dict(sorted(epoch_directions.items()))
+        self._final_sequence = int(frame.sequence)
         host = str(frame.host)
         self._host_counts[host] = self._host_counts.get(host, 0) + 1
         if self._current_game_id:
@@ -254,18 +328,29 @@ class DebugFrameRecorder:
         }
 
     def close(self) -> None:
+        if self._stream is None:
+            return
         stream, self._stream = self._stream, None
+        source_closed = True
         if stream is not None:
             try:
                 stream.flush()
+            except OSError:
+                source_closed = False
+            try:
                 stream.close()
             except OSError:
-                pass
+                source_closed = False
+        if not source_closed:
+            self._write_status("close_failed", close_reason="source_close_failed")
+            return
+        close_reason = "recorder_closed"
         if self._current_game_id:
             game = self._games.get(self._current_game_id)
             if game is not None:
                 game["status"] = "incomplete"
                 self._write_game_metadata(game)
+                close_reason = "recorder_closed_with_incomplete_game"
             self._current_game_id = ""
         if self._bytes_written:
             try:
@@ -274,7 +359,7 @@ class DebugFrameRecorder:
                 # The complete session capture remains available even if a
                 # per-game forensic copy cannot be materialized.
                 pass
-            self._write_status("closed")
+            self._write_status("closed", close_reason=close_reason)
             return
         # Avoid leaving a directory behind when startup produced no frames.
         # Only remove the exact files/directories created by this recorder.
@@ -292,28 +377,72 @@ class DebugFrameRecorder:
 
 
 class GuanceController:
-    def __init__(self, viewmodel: Any, *, paths: dict[str, Path] | None = None):
+    def __init__(self, viewmodel: Any, *, paths: dict[str, Path] | None = None,
+                 model_client_factory: ModelClientFactory | None = None,
+                 aggregate_parser: AggregateParser | None = None,
+                 accepted_host: str | None = None,
+                 runtime_factory: Callable[..., Any] | None = None,
+                 diagnostics_factory: Callable[[], Any] | None = None,
+                 training_recorder_factory: Callable[..., Any] | None = None,
+                 proxy_snapshot_factory: Callable[[], ProxySnapshot] | None = None,
+                 certificate_inspector: Callable[[Path], Any] | None = None,
+                 live_subset_provider: Any | None = None,
+                 canonical_converter_factory: Callable[[Path, str], Any] | None = None):
         self.viewmodel = viewmodel
         self.paths = paths or app_paths()
         ensure_app_paths(self.paths)
         self.log = DiagnosticLog(self.paths["logs_dir"])
         self.preferences = load_preferences(self.paths)
-        self.session = SessionEngine("desktop")
+        # The application layer owns orchestration; the composition root injects
+        # the concrete process/client adapter. Without one, model use is explicit
+        # unavailable rather than an implicit provider fallback.
+        self._model_client_factory = model_client_factory
+        self._runtime_factory = runtime_factory
+        self._diagnostics_factory = diagnostics_factory
+        self._training_recorder_factory = training_recorder_factory
+        self._proxy_snapshot_factory = proxy_snapshot_factory
+        self._certificate_inspector = certificate_inspector
+        self._canonical_converter_factory = canonical_converter_factory
+        self._live_subset = live_subset_provider or _NoLiveSubsetProvider()
+        self.session = SessionEngine(
+            "desktop", aggregate_parser=aggregate_parser, accepted_host=accepted_host,
+            event_adapter=self._live_subset.adapt_event,
+            event_observer=self._live_subset.observe_applied,
+            reset_observer=self._live_subset.reset_session,
+        )
         self._lock = threading.RLock()
-        self._runtime: RuntimeService | None = None
+        self._runtime: Any | None = None
         self._operation_lock = threading.Lock()
         self._debug_recorder: DebugFrameRecorder | None = None
+        self._canonical_converter: Any | None = None
+        self._last_canonical_close: Any | None = None
         self._debug_capture_failed = False
+        self._training_recorder: Any | None = None
+        self._training_failed = False
+        self._training_stopped = False
+        self._training_last_stats: dict[str, Any] = {}
         self._last_debug_capture_stats: dict[str, Any] = {}
         self._current_game_id = ""
         self._table_game_key: tuple[str, str] | None = None
         self._table_seat_confirmed = False
         self._last_frame_received_at: float | None = None
         self._active_advice_key: tuple[str, str, int] | None = None
+        self._latest_model_observation = None
+        self._pending_model_observation = None
         self._primary_engine_error: dict[str, Any] | None = None
         self._engine_error_repeats = 0
-        self._model = InferenceClient(default_model_path(self.paths), on_result=self._on_advice,
-                                      on_status=self._on_model_status, threads=2)
+        self._model_selection_lock = threading.RLock()
+        self._selection_generation = 0
+        self._model_ui_sequence = 0
+        self._selection_failed = bool(self.preferences.get('model_selection_failed', False))
+        self._selection_in_progress = False
+        self._controller_closed = False
+        if self._selection_failed:
+            self._requested_source = self.preferences.get('requested_model_path', '')
+        else:
+            self._requested_source = default_model_source(self.paths, self.preferences)
+        self._persisted_source = self.preferences.get('model_path', '')
+        self._create_model_service()
         self._attach_signals()
         self.viewmodel.set_debug_capture_enabled(
             bool(self.preferences.get("debug_capture_enabled", False))
@@ -416,12 +545,23 @@ class GuanceController:
 
     def _open_debug_recorder(self) -> None:
         self._debug_capture_failed = False
+        self._last_canonical_close = None
         if not bool(self.preferences.get("debug_capture_enabled", False)):
             self._debug_recorder = None
+            self._canonical_converter = None
+            self._live_subset.unbind_capture()
             return
         recorder = DebugFrameRecorder(self._debug_capture_root())
         path = recorder.start()
+        try:
+            converter = (self._canonical_converter_factory(path.parent, path.parent.name)
+                         if self._canonical_converter_factory is not None else None)
+            self._live_subset.bind_capture(path.parent.name)
+        except Exception:
+            recorder.close()
+            raise
         self._debug_recorder = recorder
+        self._canonical_converter = converter
         self.viewmodel.append_log({
             "level": "INFO",
             "code": "DEBUG_CAPTURE_STARTED",
@@ -430,17 +570,100 @@ class GuanceController:
 
     def _close_debug_recorder(self) -> None:
         recorder, self._debug_recorder = self._debug_recorder, None
+        converter, self._canonical_converter = self._canonical_converter, None
+        source_error: Exception | None = None
+        path = recorder.path if recorder is not None else None
         if recorder is not None:
-            path = recorder.path
-            recorder.close()
-            stats = recorder.stats
-            self._last_debug_capture_stats = stats
-            if path is not None and stats.get("frames", 0):
-                self.viewmodel.append_log({
-                    "level": "INFO",
-                    "code": "DEBUG_CAPTURE_STOPPED",
-                    "message": f"调试报文已保存：{path}",
-                })
+            try:
+                recorder.close()
+            except Exception as exc:  # source must close before the converter
+                source_error = exc
+            self._last_debug_capture_stats = recorder.stats
+        if converter is not None:
+            if source_error is not None:
+                converter.block("SOURCE_CLOSE_FAILED")
+            try:
+                self._last_canonical_close = converter.close()
+            except Exception:
+                self._last_canonical_close = None
+        self._live_subset.unbind_capture()
+        if path is not None and self._last_debug_capture_stats.get("frames", 0):
+            self.viewmodel.append_log({
+                "level": "INFO",
+                "code": "DEBUG_CAPTURE_STOPPED",
+                "message": f"调试报文已保存：{path}",
+            })
+        if source_error is not None:
+            raise source_error
+
+    def _ensure_training_recorder(self) -> None:
+        # The capture callback and asynchronous start thread can race here.
+        # Use the existing RLock so only one recorder owns a capture run.
+        with self._lock:
+            if (self._training_recorder is not None or self._training_failed or self._training_stopped
+                    or os.environ.get("GUANCE_TRAINING_DATA", "1").lower() in {"0", "false", "off"}):
+                return
+            try:
+                factory = self._training_recorder_factory or TrainingDataRecorder
+                if factory is None:
+                    raise RuntimeError("training recorder composition is unavailable")
+                self._training_recorder = factory(
+                    self.paths["data_dir"], rule_profile="tencent_daguandan",
+                    rule_revision="guance-observed-v1",
+                )
+            except Exception:
+                self._training_failed = True
+
+    def _training_update(self, update: EngineUpdate) -> None:
+        """Optional subscriber: bounded in-memory copy/queue, never disk or model work.
+
+        Recording is enabled by default and independent of debug frame recording.
+        A failure must never escape into the verified state/recommendation path.
+        """
+        if self._training_stopped or self._training_failed:
+            return
+        if os.environ.get("GUANCE_TRAINING_DATA", "1").lower() in {"0", "false", "off"}:
+            return
+        try:
+            if update.kind == "error":
+                self._training_invalidate("state_error")
+                return
+            if update.kind != "state":
+                return
+            self._ensure_training_recorder()
+            if self._training_recorder is not None:
+                self._training_recorder.observe_update(update)
+        except Exception:
+            # Do not synchronously log private exception text or touch UI/model.
+            self._training_failed = True
+            self._training_invalidate("external_loss")
+
+    def _training_invalidate(self, reason: str) -> None:
+        try:
+            if self._training_recorder is not None:
+                self._training_recorder.invalidate_current(reason)
+        except Exception:
+            self._training_failed = True
+
+    def _close_training_recorder(self) -> None:
+        recorder, self._training_recorder = self._training_recorder, None
+        if recorder is not None:
+            try:
+                # Existing network/model cleanup always precedes a stop call.
+                # Daemon drains asynchronously; application shutdown never waits on disk.
+                self._training_last_stats = recorder.close(timeout=0.0)
+            except Exception:
+                self._training_failed = True
+
+    def _training_stats(self) -> dict[str, Any]:
+        try:
+            value = self._training_recorder.stats() if self._training_recorder else self._training_last_stats
+            # Metadata-only diagnostics; never include decisions or file paths.
+            return {k: v for k, v in value.items() if type(v) in (int, bool)} | {
+                "subscriber_failed": self._training_failed,
+            }
+        except Exception:
+            return {"subscriber_failed": True}
 
     @staticmethod
     def _open_directory(path: Path) -> bool:
@@ -508,12 +731,17 @@ class GuanceController:
 
     def _mode_options(self) -> RuntimeOptions:
         helper = self.paths["runtime_dir"] / "mitmproxy" / "mitmdump.exe"
-        if not helper.is_file():
-            helper = Path(r"C:\Program Files\mitmproxy\bin\mitmdump.exe")
         addon = self.paths["runtime_dir"] / "mitmproxy" / "addon.py"
-        if not addon.is_file():
-            addon = Path(__file__).resolve().parents[1] / "infrastructure" / "capture" / "addon.py"
-        proxy = WindowsProxyBackend().snapshot()
+        # A frozen no-capture package must remain explicitly unavailable.  It must
+        # never discover an unrelated system helper or source-tree addon after the
+        # package audit deliberately excluded its controlled runtime.
+        if not getattr(sys, "frozen", False):
+            if not helper.is_file():
+                helper = Path(r"C:\Program Files\mitmproxy\bin\mitmdump.exe")
+            if not addon.is_file():
+                addon = Path(__file__).resolve().parents[1] / "infrastructure" / "capture" / "addon.py"
+        proxy = (self._proxy_snapshot_factory() if self._proxy_snapshot_factory is not None
+                 else ProxySnapshot(enabled=False))
         upstream = None
         mode = CaptureMode.DIRECT
         if proxy.enabled and proxy.server:
@@ -536,12 +764,15 @@ class GuanceController:
             require_certificate=True,
         )
 
-    def _build_runtime(self) -> RuntimeService:
+    def _build_runtime(self) -> Any:
+        if self._runtime_factory is None:
+            raise RuntimeError("runtime composition is unavailable")
         options = self._mode_options()
         paths = RuntimePaths.from_mapping(self.paths)
-        runtime = RuntimeService(paths, on_frame=self._on_frame, on_status=self._on_runtime_status,
-                                 options=options, diagnostics=BoundedDiagnostics())
-        return runtime
+        diagnostics = self._diagnostics_factory() if self._diagnostics_factory is not None else None
+        return self._runtime_factory(
+            paths, on_frame=self._on_frame, on_status=self._on_runtime_status,
+            options=options, diagnostics=diagnostics)
 
     def _ensure_certificate_material(self) -> None:
         """Start the helper briefly so mitmproxy creates its per-install CA.
@@ -593,7 +824,9 @@ class GuanceController:
     def refresh_preflight(self) -> None:
         """Refresh side-effect-free certificate state for the first-use UI."""
         try:
-            status = WindowsCertificateManager(self.paths["cert_dir"]).inspect()
+            if self._certificate_inspector is None:
+                return
+            status = self._certificate_inspector(self.paths["cert_dir"])
             state = str(getattr(status, "state", "unknown"))
             message = str(getattr(status, "message", ""))
             self._status({
@@ -651,9 +884,14 @@ class GuanceController:
             # is also the explicit recovery path after an active reconnect or
             # protocol error has put the previous engine into fail-closed mode.
             with self._lock:
+                self._close_training_recorder()
+                self._training_failed = False
+                self._training_stopped = False
                 self.session.reset()
                 self._last_frame_received_at = None
                 self._active_advice_key = None
+                self._latest_model_observation = None
+                self._pending_model_observation = None
                 self._table_game_key = None
                 self._table_seat_confirmed = False
                 self.viewmodel.apply_table_state({})
@@ -664,6 +902,7 @@ class GuanceController:
             self._model.invalidate()
             self.viewmodel.clear_advice("新的采集会话已开始，等待新局。")
             if not self._capture_port_available():
+                self._close_training_recorder()
                 self._status({"phase":"error","running":False,"connected":False,"busy":False,
                               "error_message":"采集端口 18080 已被占用",
                               "detail":"请关闭旧的掼策/mitmdump 进程后再开始使用。"})
@@ -672,26 +911,43 @@ class GuanceController:
             if self._runtime is None:self._runtime=self._build_runtime()
             result=self._runtime.start()
             if result.get("ok"):
-                self._model.start()
+                self._ensure_training_recorder()
+                if isinstance(self._model, ModelService) and self._model.status.get("model_status") == "closed":
+                    self._create_model_service()
+                if not self._selection_failed and not self._selection_in_progress:
+                    self._model.start()
                 self._status({"phase":"waiting","running":True,"connected":True,"busy":False,"network_mode":result.get("mode","direct"),"detail":"采集已启动。请关闭当前大掼蛋小程序，重新打开大掼蛋并进入“经典玩法”实际对局；只停留在首页或大厅不会产生局面。"})
             else:
                 self._close_debug_recorder()
+                self._close_training_recorder()
                 self._status({"phase":"error","running":False,"connected":False,"busy":False,"error_message":result.get("message","采集启动失败"),"detail":"当前无法安全启动采集。"})
         except Exception as exc:
             self._close_debug_recorder()
+            self._close_training_recorder()
             self.log.write("runtime_start_failed", level="ERROR", message=type(exc).__name__)
             self._status({"phase":"error","running":False,"connected":False,"busy":False,"error_message":"采集服务启动失败","detail":"请打开诊断。"})
     def stop(self) -> None:
         self._run_async("stop", self._stop_impl)
 
     def _stop_impl(self) -> None:
+        with self._lock:
+            self._selection_generation += 1
+            generation = self._selection_generation
+            self._model_ui_sequence = 0
+            if self._selection_in_progress:
+                self._selection_failed = True
+            self._active_advice_key = None
+        self.viewmodel.set_model_selection_generation(generation)
         if self._runtime is not None:
             self._runtime.stop()
         with self._lock:
+            self._training_stopped = True
             self._close_debug_recorder()
             self.session.reset()
             self._last_frame_received_at = None
             self._active_advice_key = None
+            self._latest_model_observation = None
+            self._pending_model_observation = None
             self._table_game_key = None
             self._table_seat_confirmed = False
             self.viewmodel.apply_table_state({})
@@ -701,6 +957,7 @@ class GuanceController:
             self._engine_error_repeats = 0
             self._model.invalidate()
         self._model.close()
+        self._close_training_recorder()
         self._status({"phase":"stopped","running":False,"connected":False,"busy":False})
 
     def _run_async(self, operation: str, callback, *args) -> None:
@@ -729,19 +986,207 @@ class GuanceController:
                       "certificate_fingerprint":str(certificate.get("fingerprint", "")),
                       "error_message":"" if result.get("ok") else result.get("message", "证书处理失败")})
 
-    def import_model(self, path: str) -> None:
-        candidate=Path(path)
-        if candidate.suffix.lower() != ".npz" or not candidate.is_file():
-            self._status({"phase":"error","model_state":"error","error_message":"请选择有效的 .npz 模型文件","detail":"模型导入没有完成。"})
+    @property
+    def requested_source(self):
+        return self._requested_source
+
+    @property
+    def persisted_source(self):
+        return self._persisted_source
+
+    @property
+    def active_source(self):
+        return self._model.active_source if isinstance(self._model, ModelService) else None
+
+    @property
+    def selection_generation(self) -> int:
+        return self._selection_generation
+
+    def _new_model_service(self, generation: int) -> ModelService:
+        timeout = self.preferences.get('advice_timeout_ms', 2000)
+        threads = self.preferences.get('inference_threads', 2)
+        timeout = timeout if type(timeout) in (int, float) and 0 < timeout <= 60000 else 2000
+        threads = threads if type(threads) is int and 1 <= threads <= 4 else 2
+        return ModelService(on_result=lambda value: self._on_advice(value, generation=generation),
+            on_status=lambda value: self._on_model_status(value, generation=generation),
+            client_factory=self._model_client_factory,
+            timeout_seconds=timeout / 1000, threads=threads)
+
+    def _create_model_service(self) -> ModelService:
+        # Restart is session-owned: never re-read an old preference/default after
+        # a failed explicit selection. Explicit import is the only retry path.
+        with self._lock:
+            self._selection_generation += 1
+            generation = self._selection_generation
+            self._model_ui_sequence = 0
+            service = self._new_model_service(generation)
+            self._model = service
+            blocked = self._selection_failed or self._selection_in_progress or self._controller_closed
+            requested = self._requested_source
+        self.viewmodel.set_model_selection_generation(generation)
+        if blocked:
+            service.fail_selection('MODEL_NOT_LOADED')
+        else:
+            service._select(requested, start=False)
+        return service
+
+    def _model_ui_payload(self, data: dict, generation: int) -> dict | None:
+        with self._lock:
+            if generation != self._selection_generation:
+                return None
+            self._model_ui_sequence += 1
+            sequence = self._model_ui_sequence
+        return {**data, '_model_selection_generation': generation,
+                '_model_ui_sequence': sequence}
+
+    def _model_ui(self, data: dict, generation: int) -> None:
+        payload = self._model_ui_payload(data, generation)
+        if payload is not None:
+            self._status(payload)
+
+    def _clear_model_advice(self, reason: str, generation: int) -> None:
+        payload = self._model_ui_payload({'reason': reason}, generation)
+        if payload is not None:
+            self.viewmodel.clear_advice(reason, generation=generation,
+                                        sequence=payload['_model_ui_sequence'])
+
+    def _persist_selection_failure_locked(self, generation: int, requested_source: object) -> None:
+        """Persist fail-closed intent while the selection commit lock is held."""
+        with self._lock:
+            if generation != self._selection_generation or self._controller_closed:
+                return
+            preferences = {**self.preferences,
+                'model_selection_failed': True,
+                'requested_model_path': str(requested_source)}
+        try:
+            save_preferences(self.paths, preferences)
+        except Exception:
+            return
+        with self._lock:
+            if generation == self._selection_generation and not self._controller_closed:
+                self.preferences = preferences
+                self._persisted_source = preferences.get('model_path', '')
+
+    def _persist_selection_failure(self, generation: int, requested_source: object) -> None:
+        """Persist fail-closed intent when storage is usable.
+
+        If storage itself is unavailable the in-memory latch remains authoritative
+        for this application session; no cross-process durability is claimed.
+        """
+        acquired = self._model_selection_lock.acquire(timeout=2.0)
+        if not acquired:
             return
         try:
-            self._model.close()
-            self._model=InferenceClient(candidate, on_result=self._on_advice, on_status=self._on_model_status, threads=2)
-            self._model.start()
-            self._status({"model_state":"loading","model_summary":f"正在加载：{candidate.name}","detail":"正在校验模型文件。"})
-        except Exception as exc:
-            self.log.write("model_import_failed", level="ERROR", message=type(exc).__name__)
-            self._status({"phase":"error","model_state":"error","error_message":"模型导入失败","detail":"请查看诊断信息。"})
+            self._persist_selection_failure_locked(generation, requested_source)
+        finally:
+            self._model_selection_lock.release()
+
+    def import_model(self, path: str) -> None:
+        # Empty dialog cancellation is not a confirmed selection.
+        if path == '':
+            return
+        with self._lock:
+            if self._controller_closed:
+                return
+            self._selection_generation += 1
+            generation = self._selection_generation
+            self._model_ui_sequence = 0
+            self._selection_failed = True
+            self._selection_in_progress = True
+            self._requested_source = path
+            self._active_advice_key = None
+            latest = self._latest_model_observation
+            self._pending_model_observation = latest if (
+                latest is not None and not self.session.paused
+                and latest.current_seat == latest.my_seat) else None
+            old = self._model
+            service = self._new_model_service(generation)
+            self._model = service
+        self.viewmodel.set_model_selection_generation(generation)
+        self._clear_model_advice('模型已切换，等待校验。', generation)
+        self._model_ui({'model_state': 'loading', 'model_metadata': {},
+            'model_summary': '正在校验所选模型包', 'error_message': '',
+            'detail': '正在校验并保存模型选择。'}, generation)
+        # Service.close logically detaches first; no game-state lock is held here.
+        old.close()
+        if isinstance(old, ModelService) and old.cleanup_errors:
+            service.fail_selection('MODEL_CLEANUP_FAILED')
+            self._persist_selection_failure(generation, path)
+            with self._lock:
+                if generation == self._selection_generation:
+                    self._selection_in_progress = False
+                    self._pending_model_observation = None
+            return
+        if not self._model_selection_lock.acquire(timeout=2.0):
+            service.fail_selection('MODEL_SELECTION_BUSY')
+            self._persist_selection_failure(generation, path)
+            with self._lock:
+                if generation == self._selection_generation:
+                    self._selection_in_progress = False
+                    self._pending_model_observation = None
+            return
+        activated = False
+        try:
+            with self._lock:
+                if generation != self._selection_generation or self._controller_closed:
+                    return
+            try:
+                if not isinstance(path, (str, Path)) or not str(path).strip():
+                    raise ValueError('invalid model source')
+                selected = Path(path).resolve()
+            except Exception:
+                service.fail_selection('MODEL_SOURCE_INVALID')
+                self._persist_selection_failure(generation, path)
+                return
+            preferences = {**self.preferences, 'model_path': str(selected),
+                'model_selection_failed': False, 'requested_model_path': str(selected)}
+            try:
+                save_preferences(self.paths, preferences)
+            except Exception:
+                service.fail_selection('MODEL_PREFERENCES_FAILED')
+                return
+            with self._lock:
+                # The selection commit lock preserves write order. A superseded
+                # writer records no in-memory identity and cannot activate; the
+                # newest waiting writer commits next. Close also forbids revival.
+                if generation != self._selection_generation or self._controller_closed:
+                    return
+                self._persisted_source = str(selected)
+                self.preferences = preferences
+                self._requested_source = selected
+                self._selection_failed = False
+            service.import_model(selected)
+            activated = service.status.get('model_status') == 'ready'
+            if not activated:
+                self._persist_selection_failure_locked(generation, selected)
+        finally:
+            with self._lock:
+                if generation == self._selection_generation:
+                    self._selection_in_progress = False
+            self._model_selection_lock.release()
+        pending = None
+        if activated:
+            with self._lock:
+                if generation == self._selection_generation and not self._controller_closed:
+                    pending, self._pending_model_observation = self._pending_model_observation, None
+        else:
+            with self._lock:
+                if generation == self._selection_generation:
+                    self._pending_model_observation = None
+        if pending is not None:
+            with self._lock:
+                submit = (generation == self._selection_generation
+                          and self._model is service and not self._controller_closed
+                          and not self._selection_failed)
+                if submit:
+                    self._active_advice_key = pending.key
+            if submit:
+                self._model_ui({'phase': 'thinking', 'connected': True, 'running': True}, generation)
+                try:
+                    service.submit(pending)
+                except Exception:
+                    # A concurrent close/new selection already revoked delivery.
+                    pass
 
     def _diagnostic_snapshot(self) -> dict[str, Any]:
         """Build a bounded, metadata-only diagnostic snapshot.
@@ -817,6 +1262,7 @@ class GuanceController:
             },
             "session": session_summary,
             "debug_capture": capture_stats,
+            "training_data": self._training_stats(),
         }
 
     def export_diagnostics(self) -> None:
@@ -866,6 +1312,7 @@ class GuanceController:
                     self._debug_recorder.append(frame)
                 except DebugCaptureError as exc:
                     self._debug_capture_failed = True
+                    self._training_invalidate("capture_error")
                     self._close_debug_recorder()
                     self._active_advice_key = None
                     self._model.invalidate()
@@ -874,12 +1321,32 @@ class GuanceController:
                     return
             if self._debug_capture_failed:
                 return
-            for update in self.session.feed(frame):
+            updates = self.session.feed(frame)
+            for update in updates:
+                if self._canonical_converter is not None:
+                    self._canonical_converter.observe_engine_update(update)
                 self._handle_update(update)
+            if self._canonical_converter is not None:
+                for decision in self._live_subset.drain_decisions():
+                    try:
+                        self._canonical_converter.observe_decision_opportunity(
+                            frame_sequence=decision.frame_sequence,
+                            state_version=decision.public_state.identity.state_version,
+                            public_action_index=len(decision.public_state.history.actions),
+                        )
+                        self._canonical_converter.record_decision(decision)
+                    except Exception as exc:
+                        self._canonical_converter.block(getattr(exc, "code", "DECISION_WRITE_FAILED"))
+                        self._active_advice_key = None
+                        self._model.invalidate()
+                        self.viewmodel.clear_advice("严格模型输入不可用，推荐已暂停。")
 
     def _handle_update(self, update: EngineUpdate) -> None:
+        self._training_update(update)
         if update.kind == "error":
             self._active_advice_key = None
+            self._latest_model_observation = None
+            self._pending_model_observation = None
             self._model.invalidate()
             self.viewmodel.clear_advice("局面无法安全同步，推荐已暂停。")
             if update.error_code == "engine_paused" and self._primary_engine_error is not None:
@@ -944,6 +1411,8 @@ class GuanceController:
                 self.viewmodel.clear_advice("局面已切换，等待新局推荐。")
             if not is_information:
                 self._active_advice_key = None
+                self._latest_model_observation = None
+                self._pending_model_observation = None
                 self._model.invalidate()
             if state_phase == "waiting_start" and game_id and self._debug_recorder is not None:
                 self._debug_recorder.begin_game(game_id, source_sequence)
@@ -978,6 +1447,7 @@ class GuanceController:
             self._status(status_data)
         if update.kind == "observation" and update.observation:
             observation = update.observation
+            self._latest_model_observation = observation
             self.viewmodel.apply_observation(observation.to_dict())
             table_matches = (
                 self._table_game_key is None
@@ -987,35 +1457,113 @@ class GuanceController:
                 observation.my_seat in range(4)
                 and (self._table_game_key is None or self._table_seat_confirmed)
             )
-            if (not self.session.paused and table_matches and seat_confirmed
-                    and observation.current_seat == observation.my_seat):
+            eligible = (not self.session.paused and table_matches and seat_confirmed
+                        and observation.current_seat == observation.my_seat)
+            if eligible and getattr(self, '_selection_in_progress', False):
+                self._pending_model_observation = observation
+            elif (eligible and not getattr(self, '_selection_failed', False)):
                 self._active_advice_key = observation.key
-                self._status({"phase": "thinking", "connected": True, "running": True})
+                self._status({'phase': 'thinking', 'connected': True, 'running': True})
                 self._model.submit(observation)
 
-    def _on_advice(self, result: dict) -> None:
+    def _on_advice(self, result: CanonicalAdviceResult | dict, *, generation: int | None = None) -> None:
+        if generation is not None and (generation != self._selection_generation or self._selection_failed):
+            return
+        # DTOs stay typed until this presentation boundary. Keep a narrow legacy
+        # mapping path for existing injected test/adapters.
+        wire = result.to_dict() if isinstance(result, CanonicalAdviceResult) else result
+        if not isinstance(wire, dict):
+            return
         # A delayed callback must not resurrect the previous turn/game or
         # replace "confirming seat"/terminal/error status with "ready".
         with self._lock:
-            key = (result.get("session_id"), result.get("game_id"), result.get("state_version"))
+            key = (wire.get("session_id"), wire.get("game_id"), wire.get("state_version"))
             if self._active_advice_key is None or key != self._active_advice_key or self.session.paused:
                 return
             if self._table_game_key is not None and key[1] != self._table_game_key[1]:
                 return
-            self.viewmodel.apply_advice(result)
-            self._status({"phase": "ready", "connected": True, "running": True})
+            if generation is not None and generation != self._selection_generation:
+                return
+        if generation is not None:
+            payload = self._model_ui_payload(wire, generation)
+            if payload is None:
+                return
+            wire = payload
+        self.viewmodel.apply_advice(wire)
+        data = {'phase': 'ready', 'connected': True, 'running': True}
+        if generation is None:
+            self._status(data)
+        else:
+            self._model_ui(data, generation)
 
-    def _on_model_status(self, status: dict) -> None:
-        if status.get("model_status") == "ready":
-            self._status({"model_state":"ready","model_summary":"本地模型已就绪"})
-        elif status.get("model_status") == "error":
+    @staticmethod
+    def _model_summary(metadata: dict[str, Any], state: str) -> str:
+        if not isinstance(metadata, dict) or not metadata:
+            return "模型状态：" + state
+        parts = [str(metadata.get("provider", "model")),
+                 str(metadata.get("backend", "")), str(metadata.get("runtime", "")),
+                 str(metadata.get("model_version", ""))]
+        parts = [part for part in parts if part]
+        fingerprint = str(metadata.get("model_sha256", ""))
+        if fingerprint:
+            parts.append("sha256:" + fingerprint[:12])
+        if metadata.get("experimental"):
+            parts.append("experimental")
+        if metadata.get("classification") == "evaluation_only":
+            parts.append("evaluation-only")
+        if metadata.get("test_only"):
+            parts.append("test-only")
+        if metadata.get("production_ready") is False:
+            parts.append("not-production-ready")
+        return " / ".join(parts) + "（" + state + "）"
+
+    def _on_model_status(self, status: ModelStatusSnapshot | dict, *, generation: int | None = None) -> None:
+        state = status.get("model_status")
+        with self._lock:
+            if generation is not None and generation != self._selection_generation:
+                return
+            if generation is not None and state in {'error', 'unavailable', 'timeout'}:
+                self._selection_failed = True
+                self._active_advice_key = None
+                requested = self._requested_source
+            else:
+                requested = None
+            if generation is not None and state == 'ready' and self._selection_failed:
+                return
+        metadata = status.get("metadata", {})
+        publish = self._status if generation is None else lambda data: self._model_ui(data, generation)
+        if state == "ready":
+            ready = {"model_state": "ready", "model_summary": self._model_summary(metadata, "ready"),
+                     "model_metadata": metadata, "error_message": ""}
+            # A prior selection failure moved the presentation into an error
+            # phase that deliberately rejects observations. Explicit retry is
+            # the only recovery and must reopen observation admission without
+            # claiming that a game is already synchronized.
+            if generation is not None and getattr(self.viewmodel, "_phase", "") == "error":
+                ready.update({"phase": "waiting", "detail": "模型已就绪，等待当前局面。"})
+            publish(ready)
+        elif state in {"error", "unavailable", "timeout"}:
             self._active_advice_key = None
-            self._model.invalidate()
-            self.viewmodel.clear_advice("模型异常，推荐已暂停。")
-            self._status({"phase":"error","model_state":"error","error_message":status.get("message","模型异常")})
+            if generation is None and hasattr(self, '_model'):
+                self._model.invalidate()
+            if generation is None:
+                self.viewmodel.clear_advice('模型不可用，推荐已暂停。')
+            else:
+                self._clear_model_advice('模型不可用，推荐已暂停。', generation)
+            update = {"model_state": state, "model_metadata": metadata,
+                      "model_summary": self._model_summary(metadata, state or "unavailable"),
+                      "error_code": status.get("error_code", ""),
+                      "error_message": status.get("message", "模型异常")}
+            if state in {"error", "timeout"}:
+                update["phase"] = "error"
+            publish(update)
+        elif state in {"loading", "uninitialized", "closed"}:
+            publish({"model_state": state, "model_metadata": {},
+                          "model_summary": "正在加载本地模型" if state == "loading" else "尚未加载模型"})
 
     def _on_runtime_status(self, status: dict) -> None:
         if status.get("state") in {"error","stop_error"}:
+            self._training_invalidate("capture_error")
             self._active_advice_key = None
             self._model.invalidate()
             self.viewmodel.clear_advice("采集异常，推荐已暂停。")
@@ -1027,7 +1575,10 @@ class GuanceController:
 
     def close(self) -> None:
         """Synchronously release helper, proxy ownership, recorder and model."""
+        with self._lock:
+            self._controller_closed = True
         try:
             self._stop_impl()
         finally:
+            self._close_training_recorder()
             self.log.close()

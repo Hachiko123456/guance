@@ -11,6 +11,9 @@ the validated application subset.
 from __future__ import annotations
 
 from pathlib import Path, PurePosixPath
+from hashlib import sha256
+import json
+import os
 
 import PySide6
 from PyInstaller.building.build_main import Analysis, COLLECT, EXE, PYZ
@@ -54,18 +57,26 @@ APP_ICON = ROOT / "app.ico"
 APP_QML = ROOT / "src" / "guance" / "presentation" / "qml"
 MITMPROXY_RUNTIME = ROOT / "runtime" / "mitmproxy"
 MODEL = ROOT / "data" / "profiles" / "tencent_daguandan" / "models" / "best.npz"
+MODEL_BUNDLE_ROOT = ROOT / "data" / "models"
 RUNTIME_HOOK = ROOT / "scripts" / "qt_runtime_hook.py"
+EXCLUDE_CAPTURE_RUNTIME = os.environ.get("GUANCE_EXPERIMENTAL_PACKAGE_NO_CAPTURE_RUNTIME") == "1"
 
-for required in (APP_ICON, APP_QML, MITMPROXY_RUNTIME, MODEL, RUNTIME_HOOK):
+required_inputs = [APP_ICON, APP_QML, RUNTIME_HOOK]
+if not EXCLUDE_CAPTURE_RUNTIME:
+    required_inputs.append(MITMPROXY_RUNTIME)
+for required in required_inputs:
     if not required.exists():
         raise SystemExit(f"required packaging input is missing: {required}")
 
-if not (MITMPROXY_RUNTIME / "mitmdump.exe").is_file():
-    raise SystemExit(f"mitmdump.exe is missing from the prepared runtime: {MITMPROXY_RUNTIME}")
-if not (MITMPROXY_RUNTIME / "_internal").is_dir():
-    raise SystemExit(f"mitmproxy _internal directory is missing: {MITMPROXY_RUNTIME / '_internal'}")
-if not (MITMPROXY_RUNTIME / "addon.py").is_file():
-    raise SystemExit(f"mitmproxy addon is missing: {MITMPROXY_RUNTIME / 'addon.py'}")
+if not EXCLUDE_CAPTURE_RUNTIME:
+    if not (MITMPROXY_RUNTIME / "mitmdump.exe").is_file():
+        raise SystemExit(f"mitmdump.exe is missing from the prepared runtime: {MITMPROXY_RUNTIME}")
+    if not (MITMPROXY_RUNTIME / "_internal").is_dir():
+        raise SystemExit(
+            f"mitmproxy _internal directory is missing: {MITMPROXY_RUNTIME / '_internal'}"
+        )
+    if not (MITMPROXY_RUNTIME / "addon.py").is_file():
+        raise SystemExit(f"mitmproxy addon is missing: {MITMPROXY_RUNTIME / 'addon.py'}")
 
 
 # These are imported by the application or are needed by its QML plugin graph.
@@ -75,6 +86,7 @@ TARGET_HIDDEN_IMPORTS = [
     "PySide6.QtCore",
     "PySide6.QtGui",
     "PySide6.QtNetwork",
+    "PySide6.QtOpenGL",
     "PySide6.QtQml",
     "PySide6.QtQuick",
     "PySide6.QtQuickControls2",
@@ -118,6 +130,7 @@ TARGET_QT_DLLS = [
     "Qt6QuickControls2Basic.dll",
     "Qt6QuickControls2BasicStyleImpl.dll",
     "Qt6QuickControls2Impl.dll",
+    "Qt6QmlWorkerScript.dll",
     "Qt6QuickLayouts.dll",
     "Qt6QuickTemplates2.dll",
 ]
@@ -130,6 +143,37 @@ for name in TARGET_QT_DLLS:
     # appends the source basename itself.
     target_qt_binaries.append((str(source), "PySide6"))
 
+# PySide6 wheels carry a coherent VC runtime set.  PyInstaller and the nested
+# capture helper can otherwise contribute older copies in different search
+# directories, making the Windows loader select an ABI-incompatible DLL.
+CONTROLLED_CRT_NAMES = {
+    "concrt140.dll", "msvcp140.dll", "msvcp140_1.dll", "msvcp140_2.dll",
+    "msvcp140_codecvt_ids.dll", "vcruntime140.dll", "vcruntime140_1.dll",
+}
+CONTROLLED_CRT_SOURCES = []
+for name in sorted(CONTROLLED_CRT_NAMES):
+    source = PYSIDE6_ROOT / name
+    if not source.is_file():
+        raise SystemExit(f"required controlled CRT is missing: {source}")
+    CONTROLLED_CRT_SOURCES.append(source)
+
+
+def _is_controlled_crt(entry: tuple[str, str, str]) -> bool:
+    destination = PurePosixPath(str(entry[0]).replace("\\", "/"))
+    return destination.name.lower() in CONTROLLED_CRT_NAMES
+
+
+def _is_uncontrolled_icu(entry: tuple[str, str, str]) -> bool:
+    destination = PurePosixPath(str(entry[0]).replace("\\", "/"))
+    if not destination.name.lower().startswith("icu") or not destination.name.lower().endswith(".dll"):
+        return False
+    try:
+        source = Path(str(entry[1])).resolve()
+        return not source.is_relative_to(PYSIDE6_ROOT.resolve())
+    except (OSError, ValueError):
+        return True
+
+
 ALLOWED_QT_ROOT_DLLS = {
     "Qt6Core.dll",
     "Qt6Gui.dll",
@@ -139,11 +183,13 @@ ALLOWED_QT_ROOT_DLLS = {
     "Qt6Qml.dll",
     "Qt6QmlMeta.dll",
     "Qt6QmlModels.dll",
+    "Qt6QmlWorkerScript.dll",
     "Qt6Quick.dll",
     "Qt6QuickControls2.dll",
     "Qt6QuickControls2Basic.dll",
     "Qt6QuickControls2BasicStyleImpl.dll",
     "Qt6QuickControls2Impl.dll",
+    "Qt6QmlWorkerScript.dll",
     "Qt6QuickLayouts.dll",
     "Qt6QuickTemplates2.dll",
     "Qt6Widgets.dll",
@@ -161,11 +207,95 @@ def _is_unwanted_qt_root_dll(entry: tuple[str, str, str]) -> bool:
     )
 
 
+ALLOWED_QT_PLUGINS = {
+    "PySide6/plugins/platforms/qwindows.dll",
+    "PySide6/plugins/platforms/qoffscreen.dll",
+    "PySide6/plugins/styles/qmodernwindowsstyle.dll",
+    "PySide6/plugins/imageformats/qgif.dll",
+    "PySide6/plugins/imageformats/qico.dll",
+    "PySide6/plugins/imageformats/qjpeg.dll",
+    "PySide6/plugins/networkinformation/qnetworklistmanager.dll",
+    "PySide6/plugins/tls/qcertonlybackend.dll",
+    "PySide6/plugins/tls/qschannelbackend.dll",
+}
+
+
+def _is_unwanted_qt_plugin(entry: tuple[str, str, str]) -> bool:
+    destination = PurePosixPath(str(entry[0]).replace("\\", "/"))
+    return (destination.parts[:2] == ("PySide6", "plugins")
+            and destination.as_posix() not in ALLOWED_QT_PLUGINS)
+
+
+def _model_bundle_datas() -> list[tuple[str, str]]:
+    """Collect only declared FableDan bundle files; never copy a model tree."""
+    if not MODEL_BUNDLE_ROOT.is_dir():
+        return []
+    entries: list[tuple[str, str]] = []
+    for bundle_root in sorted(path for path in MODEL_BUNDLE_ROOT.iterdir() if path.is_dir()):
+        manifest_path = bundle_root / "manifest.json"
+        if not manifest_path.is_file():
+            raise SystemExit(f"model bundle manifest is missing: {manifest_path}")
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            provider = manifest.get("provider")
+            runtime = manifest.get("runtime")
+            artifact = manifest.get("artifact")
+            if provider != "fabledan" or runtime != "numpy" or not isinstance(artifact, str):
+                raise ValueError("default package accepts only FableDan/numpy bundles")
+            relative = PurePosixPath(artifact)
+            if relative.is_absolute() or any(part in {"", ".", ".."} for part in relative.parts):
+                raise ValueError("invalid artifact path")
+            artifact_path = (bundle_root.joinpath(*relative.parts)).resolve()
+            if not artifact_path.is_relative_to(bundle_root.resolve()) or not artifact_path.is_file():
+                raise ValueError("artifact is missing or escapes bundle")
+            digest = sha256(artifact_path.read_bytes()).hexdigest()
+            if manifest.get("artifact_sha256") != digest:
+                raise ValueError("artifact hash does not match manifest")
+        except (OSError, UnicodeError, ValueError, TypeError, json.JSONDecodeError) as exc:
+            raise SystemExit(f"invalid default model bundle: {manifest_path}: {exc}") from None
+        allowed = {manifest_path.resolve(), artifact_path}
+        sums = bundle_root / "SHA256SUMS"
+        if sums.exists():
+            if not sums.is_file():
+                raise SystemExit(f"invalid model checksum file: {sums}")
+            seen: set[str] = set()
+            for line in sums.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                parts = line.split()
+                if len(parts) != 2 or len(parts[0]) != 64 or any(c not in "0123456789abcdef" for c in parts[0]):
+                    raise SystemExit(f"invalid model checksum entry: {sums}")
+                checksum_path = PurePosixPath(parts[1].lstrip("*"))
+                if checksum_path.is_absolute() or any(part in {"", ".", ".."} for part in checksum_path.parts):
+                    raise SystemExit(f"invalid model checksum path: {sums}")
+                key = checksum_path.as_posix()
+                if key in seen:
+                    raise SystemExit(f"duplicate model checksum entry: {sums}")
+                seen.add(key)
+                target = (bundle_root.joinpath(*checksum_path.parts)).resolve()
+                if (not target.is_relative_to(bundle_root.resolve()) or not target.is_file()
+                        or sha256(target.read_bytes()).hexdigest() != parts[0]):
+                    raise SystemExit(f"model checksum mismatch: {sums}")
+            if str(relative) not in seen or manifest.get("artifact_sha256") != digest:
+                raise SystemExit(f"model checksum does not cover artifact: {sums}")
+            allowed.add(sums.resolve())
+        extras = [path for path in bundle_root.rglob("*") if path.is_file() and path.resolve() not in allowed]
+        if extras:
+            raise SystemExit(f"unexpected files in model bundle: {[str(path) for path in extras[:4]]}")
+        destination = Path("data/models") / bundle_root.name
+        entries.extend((str(path), (destination / path.relative_to(bundle_root).parent).as_posix())
+                       for path in sorted(allowed) if path.is_file())
+    return entries
+
+
+MODEL_BUNDLE_DATAS = _model_bundle_datas()
+
 datas = [
     (str(APP_ICON), "."),
     (str(APP_QML), "guance/presentation/qml"),
-    (str(MITMPROXY_RUNTIME), "runtime/mitmproxy"),
-    (str(MODEL), "data/profiles/tencent_daguandan/models"),
+    *([] if EXCLUDE_CAPTURE_RUNTIME else [(str(MITMPROXY_RUNTIME), "runtime/mitmproxy")]),
+    *([(str(MODEL), "data/profiles/tencent_daguandan/models")] if MODEL.is_file() else []),
+    *MODEL_BUNDLE_DATAS,
     *target_qml_datas,
 ]
 binaries = target_qt_binaries
@@ -196,7 +326,6 @@ a = Analysis(
         "PySide6.QtLocation",
         "PySide6.QtMultimedia",
         "PySide6.QtMultimediaWidgets",
-        "PySide6.QtOpenGL",
         "PySide6.QtOpenGLWidgets",
         "PySide6.QtPdf",
         "PySide6.QtPdfWidgets",
@@ -236,8 +365,12 @@ a.datas = TOC(entry for entry in a.datas if not _is_qml_entry(entry))
 a.binaries = TOC(
     entry
     for entry in a.binaries
-    if not _is_qml_entry(entry) and not _is_unwanted_qt_root_dll(entry)
+    if (not _is_qml_entry(entry) and not _is_unwanted_qt_root_dll(entry)
+        and not _is_controlled_crt(entry) and not _is_uncontrolled_icu(entry)
+        and not _is_unwanted_qt_plugin(entry))
 )
+for source in CONTROLLED_CRT_SOURCES:
+    a.binaries.append((source.name, str(source), "BINARY"))
 
 pyz = PYZ(a.pure)
 

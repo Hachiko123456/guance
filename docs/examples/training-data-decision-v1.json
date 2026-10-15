@@ -1,0 +1,122 @@
+{
+  "record_type": "decision",
+  "schema_version": 1,
+  "action_schema_version": 1,
+  "card_encoding": "guance-physical-v1",
+  "record_id": "d46a10842058ec3fc9a2d5ad94d94d3cb3631c3cc8c00b70404474803bce6361",
+  "provenance": {
+    "source": "synthetic",
+    "source_id": "independent-derive",
+    "episode_id": "325fb0adb9319ea97b8884403f238ae7150a801b16c3aa7f9e2f9d81d90f081c",
+    "session_id": "derive-synthetic",
+    "game_id": "game-0001",
+    "source_sequence": 4,
+    "captured_at": 4.0,
+    "rule_profile": "tencent_daguandan",
+    "rule_revision": "guance-observed-v1"
+  },
+  "pre_state": {
+    "session_id": "derive-synthetic",
+    "game_id": "game-0001",
+    "state_version": 3,
+    "captured_at": 3.0,
+    "phase": "active",
+    "level": 5,
+    "my_seat": 0,
+    "first_seat": 0,
+    "current_seat": 0,
+    "hand": [
+      23
+    ],
+    "remaining": [
+      1,
+      2,
+      0,
+      2
+    ],
+    "history": [],
+    "free_lead": true,
+    "trick": 0,
+    "seat_confirmed": true,
+    "seat_confirmation_source": "manual",
+    "finish_ranks_by_seat": [
+      -1,
+      -1,
+      1,
+      -1
+    ]
+  },
+  "observed_action": {
+    "index": 1,
+    "player": 0,
+    "kind": "play",
+    "cards": [
+      23
+    ],
+    "combo_type": 1,
+    "next_player": null,
+    "trick": 0,
+    "signature": "a53fb018d7786d14bcdd839620250517d1b44d9e68826e8c90a2937ae54fd36b",
+    "event_index": 1
+  },
+  "post_state": {
+    "session_id": "derive-synthetic",
+    "game_id": "game-0001",
+    "state_version": 4,
+    "captured_at": 4.0,
+    "phase": "ended",
+    "level": 5,
+    "my_seat": 0,
+    "first_seat": 0,
+    "current_seat": -1,
+    "hand": [],
+    "remaining": [
+      0,
+      2,
+      0,
+      2
+    ],
+    "history": [
+      {
+        "index": 1,
+        "player": 0,
+        "kind": "play",
+        "cards": [
+          23
+        ],
+        "combo_type": 1,
+        "next_player": null,
+        "trick": 0
+      }
+    ],
+    "free_lead": false,
+    "trick": 0,
+    "seat_confirmed": true,
+    "seat_confirmation_source": "manual",
+    "finish_ranks_by_seat": [
+      2,
+      -1,
+      1,
+      -1
+    ]
+  },
+  "status": "accepted_candidate",
+  "quality": {
+    "status": "accepted_candidate",
+    "reasons": [],
+    "lost": false
+  },
+  "outcome": {
+    "phase": "settled",
+    "finish_ranks_by_seat": [
+      2,
+      3,
+      1,
+      4
+    ]
+  },
+  "reward": null,
+  "privacy_scope": "own_hand_and_public_actions_only",
+  "legal_actions": null,
+  "legal_actions_status": "not_recorded_regenerate_from_rules"
+}

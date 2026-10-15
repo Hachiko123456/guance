@@ -1,0 +1,121 @@
+{
+  "schema": "guandan-marvel-action-row-v2-contract-v1",
+  "protocol_version": "GD-ACTION-0.2-MARVEL|GD-ENV-0.2-MARVEL|GD-ENCODING-0.2-MARVEL",
+  "dtype": "int64",
+  "row_shape": [
+    8
+  ],
+  "max_rows": 256,
+  "columns": [
+    {
+      "column": 0,
+      "name": "ROW_BEGIN",
+      "value": 262
+    },
+    {
+      "column": 1,
+      "name": "PHASE",
+      "values": {
+        "2": "LEAD_PLAY",
+        "3": "FOLLOW_PLAY",
+        "4": "TRIBUTE",
+        "5": "RETURN"
+      }
+    },
+    {
+      "column": 2,
+      "name": "PREFIX_STAGE",
+      "range": "263..295",
+      "decode": "value-263 is private prefix length 0..32"
+    },
+    {
+      "column": 3,
+      "name": "KIND",
+      "values": {
+        "296": "PASS",
+        "297": "COMMIT",
+        "298": "FAMILY",
+        "299": "RANK",
+        "300": "SUIT",
+        "301": "LENGTH",
+        "302": "CARD",
+        "303": "WILD_ASSIGNMENT"
+      }
+    },
+    {
+      "column": 4,
+      "name": "PAYLOAD_MARKER",
+      "value": 304
+    },
+    {
+      "column": 5,
+      "name": "V1_TOKEN_ID",
+      "meaning": "single next token executed against live StepwiseActionState"
+    },
+    {
+      "column": 6,
+      "name": "IS_COMMIT",
+      "values": {
+        "305": "non-commit",
+        "306": "commit; PASS or COMMIT only"
+      }
+    },
+    {
+      "column": 7,
+      "name": "ROW_END",
+      "value": 307
+    }
+  ],
+  "v1_payload_vocabulary": {
+    "PAD": 0,
+    "BOS": 1,
+    "LEAD_PLAY": 2,
+    "FOLLOW_PLAY": 3,
+    "TRIBUTE": 4,
+    "RETURN": 5,
+    "PASS": 6,
+    "COMMIT": 7,
+    "family_tokens": "8..17 in SINGLE,PAIR,TRIPLE,FULL_HOUSE,STRAIGHT,PAIR_SEQUENCE,TRIPLE_SEQUENCE,RANK_BOMB,STRAIGHT_FLUSH,FOUR_KINGS order",
+    "rank_tokens": "18..32 in THREE..TWO,SMALL_JOKER,BIG_JOKER order",
+    "suit_tokens": "33..37 CLUBS,DIAMONDS,HEARTS,SPADES,JOKER",
+    "length_tokens": "38..48 values 0..10",
+    "card_tokens": "64..171 card_id 0..107",
+    "wild_assignment_tokens": "172..223 13 non-joker ranks x 4 suits"
+  },
+  "ordering": {
+    "stable": true,
+    "rule": "ascending unique V1 next-token id; zero rows after legal rows"
+  },
+  "mask_and_weights": {
+    "legal": "avail_weights != 0",
+    "current_environment": "1.0 legal, 0.0 padding",
+    "model_semantics": "positive values are log-priors, not only booleans",
+    "avail_is_commit": "environment metadata; Agent.forward does not consume it"
+  },
+  "execution": [
+    "Select an exact live row with positive weight.",
+    "EnvBatch.step validates all eight columns against one current candidate.",
+    "Non-commit row extends private prefix and does not advance public state.",
+    "PASS commits immediately.",
+    "COMMIT commits accumulated prefix.",
+    "Recover complete action from ProtocolCommittedAction/canonical prefix, never row[5] alone."
+  ],
+  "canonical_action_token_order": {
+    "PASS": [
+      "PASS"
+    ],
+    "TRIBUTE_or_RETURN": [
+      "CARD",
+      "COMMIT"
+    ],
+    "PLAY": [
+      "FAMILY",
+      "declared ranks; STRAIGHT_FLUSH has SUIT before rank",
+      "optional LENGTH",
+      "canonical physical CARD sequence",
+      "WILD_ASSIGNMENT sorted by physical card id",
+      "COMMIT"
+    ]
+  },
+  "guance_incompatibility": "Current simple decoder lacks phase/stage/kind framing, exact-row validation, declaration and wildcard semantics, and stateful private prefixes; it cannot decode this protocol safely."
+}

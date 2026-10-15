@@ -1,0 +1,5159 @@
+{
+  "schema": "guandan-marvel-channels-v2-contract-v1",
+  "protocol_version": "GD-ACTION-0.2-MARVEL|GD-ENV-0.2-MARVEL|GD-ENCODING-0.2-MARVEL",
+  "dtype": "uint8",
+  "shape": "[B,T,4,512]",
+  "unknown_policy": "Unknown required state must not be encoded as zero; return unsupported before tensor construction.",
+  "slices": [
+    "0:108 own hand",
+    "108:216 current winning cards",
+    "216:324 self exchange cards",
+    "324:356 private prefix",
+    "356:360 remaining counts",
+    "360:364 finishing ranks",
+    "364:368 observer",
+    "368:372 active",
+    "372:376 leader",
+    "376:380 winner",
+    "380:384 emptied",
+    "384:388 phase",
+    "388:401 level",
+    "401:405 pass count",
+    "405:407 team",
+    "407:409 previous winner team",
+    "409:412 previous outcome",
+    "412:416 previous ranking",
+    "416:426 current family",
+    "426:441 current rank",
+    "441:452 current size",
+    "452:456 tribute donors",
+    "456:460 tribute order",
+    "460:473 token_step bits",
+    "473:486 committed_step bits",
+    "486:501 flags/scalars",
+    "501:511 reserved",
+    "511:512 sentinel"
+  ],
+  "channels": [
+    {
+      "index": 0,
+      "name": "own_hand_card_0",
+      "value_range": "0|1",
+      "source_state": "card_id 0 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 1,
+      "name": "own_hand_card_1",
+      "value_range": "0|1",
+      "source_state": "card_id 1 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 2,
+      "name": "own_hand_card_2",
+      "value_range": "0|1",
+      "source_state": "card_id 2 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 3,
+      "name": "own_hand_card_3",
+      "value_range": "0|1",
+      "source_state": "card_id 3 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 4,
+      "name": "own_hand_card_4",
+      "value_range": "0|1",
+      "source_state": "card_id 4 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 5,
+      "name": "own_hand_card_5",
+      "value_range": "0|1",
+      "source_state": "card_id 5 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 6,
+      "name": "own_hand_card_6",
+      "value_range": "0|1",
+      "source_state": "card_id 6 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 7,
+      "name": "own_hand_card_7",
+      "value_range": "0|1",
+      "source_state": "card_id 7 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 8,
+      "name": "own_hand_card_8",
+      "value_range": "0|1",
+      "source_state": "card_id 8 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 9,
+      "name": "own_hand_card_9",
+      "value_range": "0|1",
+      "source_state": "card_id 9 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 10,
+      "name": "own_hand_card_10",
+      "value_range": "0|1",
+      "source_state": "card_id 10 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 11,
+      "name": "own_hand_card_11",
+      "value_range": "0|1",
+      "source_state": "card_id 11 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 12,
+      "name": "own_hand_card_12",
+      "value_range": "0|1",
+      "source_state": "card_id 12 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 13,
+      "name": "own_hand_card_13",
+      "value_range": "0|1",
+      "source_state": "card_id 13 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 14,
+      "name": "own_hand_card_14",
+      "value_range": "0|1",
+      "source_state": "card_id 14 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 15,
+      "name": "own_hand_card_15",
+      "value_range": "0|1",
+      "source_state": "card_id 15 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 16,
+      "name": "own_hand_card_16",
+      "value_range": "0|1",
+      "source_state": "card_id 16 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 17,
+      "name": "own_hand_card_17",
+      "value_range": "0|1",
+      "source_state": "card_id 17 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 18,
+      "name": "own_hand_card_18",
+      "value_range": "0|1",
+      "source_state": "card_id 18 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 19,
+      "name": "own_hand_card_19",
+      "value_range": "0|1",
+      "source_state": "card_id 19 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 20,
+      "name": "own_hand_card_20",
+      "value_range": "0|1",
+      "source_state": "card_id 20 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 21,
+      "name": "own_hand_card_21",
+      "value_range": "0|1",
+      "source_state": "card_id 21 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 22,
+      "name": "own_hand_card_22",
+      "value_range": "0|1",
+      "source_state": "card_id 22 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 23,
+      "name": "own_hand_card_23",
+      "value_range": "0|1",
+      "source_state": "card_id 23 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 24,
+      "name": "own_hand_card_24",
+      "value_range": "0|1",
+      "source_state": "card_id 24 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 25,
+      "name": "own_hand_card_25",
+      "value_range": "0|1",
+      "source_state": "card_id 25 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 26,
+      "name": "own_hand_card_26",
+      "value_range": "0|1",
+      "source_state": "card_id 26 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 27,
+      "name": "own_hand_card_27",
+      "value_range": "0|1",
+      "source_state": "card_id 27 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 28,
+      "name": "own_hand_card_28",
+      "value_range": "0|1",
+      "source_state": "card_id 28 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 29,
+      "name": "own_hand_card_29",
+      "value_range": "0|1",
+      "source_state": "card_id 29 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 30,
+      "name": "own_hand_card_30",
+      "value_range": "0|1",
+      "source_state": "card_id 30 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 31,
+      "name": "own_hand_card_31",
+      "value_range": "0|1",
+      "source_state": "card_id 31 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 32,
+      "name": "own_hand_card_32",
+      "value_range": "0|1",
+      "source_state": "card_id 32 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 33,
+      "name": "own_hand_card_33",
+      "value_range": "0|1",
+      "source_state": "card_id 33 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 34,
+      "name": "own_hand_card_34",
+      "value_range": "0|1",
+      "source_state": "card_id 34 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 35,
+      "name": "own_hand_card_35",
+      "value_range": "0|1",
+      "source_state": "card_id 35 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 36,
+      "name": "own_hand_card_36",
+      "value_range": "0|1",
+      "source_state": "card_id 36 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 37,
+      "name": "own_hand_card_37",
+      "value_range": "0|1",
+      "source_state": "card_id 37 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 38,
+      "name": "own_hand_card_38",
+      "value_range": "0|1",
+      "source_state": "card_id 38 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 39,
+      "name": "own_hand_card_39",
+      "value_range": "0|1",
+      "source_state": "card_id 39 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 40,
+      "name": "own_hand_card_40",
+      "value_range": "0|1",
+      "source_state": "card_id 40 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 41,
+      "name": "own_hand_card_41",
+      "value_range": "0|1",
+      "source_state": "card_id 41 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 42,
+      "name": "own_hand_card_42",
+      "value_range": "0|1",
+      "source_state": "card_id 42 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 43,
+      "name": "own_hand_card_43",
+      "value_range": "0|1",
+      "source_state": "card_id 43 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 44,
+      "name": "own_hand_card_44",
+      "value_range": "0|1",
+      "source_state": "card_id 44 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 45,
+      "name": "own_hand_card_45",
+      "value_range": "0|1",
+      "source_state": "card_id 45 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 46,
+      "name": "own_hand_card_46",
+      "value_range": "0|1",
+      "source_state": "card_id 46 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 47,
+      "name": "own_hand_card_47",
+      "value_range": "0|1",
+      "source_state": "card_id 47 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 48,
+      "name": "own_hand_card_48",
+      "value_range": "0|1",
+      "source_state": "card_id 48 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 49,
+      "name": "own_hand_card_49",
+      "value_range": "0|1",
+      "source_state": "card_id 49 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 50,
+      "name": "own_hand_card_50",
+      "value_range": "0|1",
+      "source_state": "card_id 50 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 51,
+      "name": "own_hand_card_51",
+      "value_range": "0|1",
+      "source_state": "card_id 51 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 52,
+      "name": "own_hand_card_52",
+      "value_range": "0|1",
+      "source_state": "card_id 52 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 53,
+      "name": "own_hand_card_53",
+      "value_range": "0|1",
+      "source_state": "card_id 53 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 54,
+      "name": "own_hand_card_54",
+      "value_range": "0|1",
+      "source_state": "card_id 54 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 55,
+      "name": "own_hand_card_55",
+      "value_range": "0|1",
+      "source_state": "card_id 55 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 56,
+      "name": "own_hand_card_56",
+      "value_range": "0|1",
+      "source_state": "card_id 56 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 57,
+      "name": "own_hand_card_57",
+      "value_range": "0|1",
+      "source_state": "card_id 57 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 58,
+      "name": "own_hand_card_58",
+      "value_range": "0|1",
+      "source_state": "card_id 58 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 59,
+      "name": "own_hand_card_59",
+      "value_range": "0|1",
+      "source_state": "card_id 59 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 60,
+      "name": "own_hand_card_60",
+      "value_range": "0|1",
+      "source_state": "card_id 60 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 61,
+      "name": "own_hand_card_61",
+      "value_range": "0|1",
+      "source_state": "card_id 61 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 62,
+      "name": "own_hand_card_62",
+      "value_range": "0|1",
+      "source_state": "card_id 62 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 63,
+      "name": "own_hand_card_63",
+      "value_range": "0|1",
+      "source_state": "card_id 63 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 64,
+      "name": "own_hand_card_64",
+      "value_range": "0|1",
+      "source_state": "card_id 64 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 65,
+      "name": "own_hand_card_65",
+      "value_range": "0|1",
+      "source_state": "card_id 65 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 66,
+      "name": "own_hand_card_66",
+      "value_range": "0|1",
+      "source_state": "card_id 66 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 67,
+      "name": "own_hand_card_67",
+      "value_range": "0|1",
+      "source_state": "card_id 67 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 68,
+      "name": "own_hand_card_68",
+      "value_range": "0|1",
+      "source_state": "card_id 68 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 69,
+      "name": "own_hand_card_69",
+      "value_range": "0|1",
+      "source_state": "card_id 69 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 70,
+      "name": "own_hand_card_70",
+      "value_range": "0|1",
+      "source_state": "card_id 70 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 71,
+      "name": "own_hand_card_71",
+      "value_range": "0|1",
+      "source_state": "card_id 71 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 72,
+      "name": "own_hand_card_72",
+      "value_range": "0|1",
+      "source_state": "card_id 72 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 73,
+      "name": "own_hand_card_73",
+      "value_range": "0|1",
+      "source_state": "card_id 73 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 74,
+      "name": "own_hand_card_74",
+      "value_range": "0|1",
+      "source_state": "card_id 74 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 75,
+      "name": "own_hand_card_75",
+      "value_range": "0|1",
+      "source_state": "card_id 75 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 76,
+      "name": "own_hand_card_76",
+      "value_range": "0|1",
+      "source_state": "card_id 76 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 77,
+      "name": "own_hand_card_77",
+      "value_range": "0|1",
+      "source_state": "card_id 77 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 78,
+      "name": "own_hand_card_78",
+      "value_range": "0|1",
+      "source_state": "card_id 78 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 79,
+      "name": "own_hand_card_79",
+      "value_range": "0|1",
+      "source_state": "card_id 79 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 80,
+      "name": "own_hand_card_80",
+      "value_range": "0|1",
+      "source_state": "card_id 80 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 81,
+      "name": "own_hand_card_81",
+      "value_range": "0|1",
+      "source_state": "card_id 81 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 82,
+      "name": "own_hand_card_82",
+      "value_range": "0|1",
+      "source_state": "card_id 82 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 83,
+      "name": "own_hand_card_83",
+      "value_range": "0|1",
+      "source_state": "card_id 83 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 84,
+      "name": "own_hand_card_84",
+      "value_range": "0|1",
+      "source_state": "card_id 84 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 85,
+      "name": "own_hand_card_85",
+      "value_range": "0|1",
+      "source_state": "card_id 85 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 86,
+      "name": "own_hand_card_86",
+      "value_range": "0|1",
+      "source_state": "card_id 86 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 87,
+      "name": "own_hand_card_87",
+      "value_range": "0|1",
+      "source_state": "card_id 87 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 88,
+      "name": "own_hand_card_88",
+      "value_range": "0|1",
+      "source_state": "card_id 88 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 89,
+      "name": "own_hand_card_89",
+      "value_range": "0|1",
+      "source_state": "card_id 89 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 90,
+      "name": "own_hand_card_90",
+      "value_range": "0|1",
+      "source_state": "card_id 90 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 91,
+      "name": "own_hand_card_91",
+      "value_range": "0|1",
+      "source_state": "card_id 91 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 92,
+      "name": "own_hand_card_92",
+      "value_range": "0|1",
+      "source_state": "card_id 92 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 93,
+      "name": "own_hand_card_93",
+      "value_range": "0|1",
+      "source_state": "card_id 93 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 94,
+      "name": "own_hand_card_94",
+      "value_range": "0|1",
+      "source_state": "card_id 94 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 95,
+      "name": "own_hand_card_95",
+      "value_range": "0|1",
+      "source_state": "card_id 95 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 96,
+      "name": "own_hand_card_96",
+      "value_range": "0|1",
+      "source_state": "card_id 96 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 97,
+      "name": "own_hand_card_97",
+      "value_range": "0|1",
+      "source_state": "card_id 97 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 98,
+      "name": "own_hand_card_98",
+      "value_range": "0|1",
+      "source_state": "card_id 98 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 99,
+      "name": "own_hand_card_99",
+      "value_range": "0|1",
+      "source_state": "card_id 99 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 100,
+      "name": "own_hand_card_100",
+      "value_range": "0|1",
+      "source_state": "card_id 100 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 101,
+      "name": "own_hand_card_101",
+      "value_range": "0|1",
+      "source_state": "card_id 101 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 102,
+      "name": "own_hand_card_102",
+      "value_range": "0|1",
+      "source_state": "card_id 102 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 103,
+      "name": "own_hand_card_103",
+      "value_range": "0|1",
+      "source_state": "card_id 103 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 104,
+      "name": "own_hand_card_104",
+      "value_range": "0|1",
+      "source_state": "card_id 104 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 105,
+      "name": "own_hand_card_105",
+      "value_range": "0|1",
+      "source_state": "card_id 105 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 106,
+      "name": "own_hand_card_106",
+      "value_range": "0|1",
+      "source_state": "card_id 106 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 107,
+      "name": "own_hand_card_107",
+      "value_range": "0|1",
+      "source_state": "card_id 107 present in observer hand",
+      "visibility": "self-private",
+      "guance_status": "available after card mapping",
+      "derivable_from_history": "no; self hand must be captured",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 108,
+      "name": "current_winning_card_0",
+      "value_range": "0|1",
+      "source_state": "card_id 0 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 109,
+      "name": "current_winning_card_1",
+      "value_range": "0|1",
+      "source_state": "card_id 1 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 110,
+      "name": "current_winning_card_2",
+      "value_range": "0|1",
+      "source_state": "card_id 2 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 111,
+      "name": "current_winning_card_3",
+      "value_range": "0|1",
+      "source_state": "card_id 3 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 112,
+      "name": "current_winning_card_4",
+      "value_range": "0|1",
+      "source_state": "card_id 4 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 113,
+      "name": "current_winning_card_5",
+      "value_range": "0|1",
+      "source_state": "card_id 5 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 114,
+      "name": "current_winning_card_6",
+      "value_range": "0|1",
+      "source_state": "card_id 6 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 115,
+      "name": "current_winning_card_7",
+      "value_range": "0|1",
+      "source_state": "card_id 7 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 116,
+      "name": "current_winning_card_8",
+      "value_range": "0|1",
+      "source_state": "card_id 8 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 117,
+      "name": "current_winning_card_9",
+      "value_range": "0|1",
+      "source_state": "card_id 9 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 118,
+      "name": "current_winning_card_10",
+      "value_range": "0|1",
+      "source_state": "card_id 10 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 119,
+      "name": "current_winning_card_11",
+      "value_range": "0|1",
+      "source_state": "card_id 11 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 120,
+      "name": "current_winning_card_12",
+      "value_range": "0|1",
+      "source_state": "card_id 12 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 121,
+      "name": "current_winning_card_13",
+      "value_range": "0|1",
+      "source_state": "card_id 13 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 122,
+      "name": "current_winning_card_14",
+      "value_range": "0|1",
+      "source_state": "card_id 14 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 123,
+      "name": "current_winning_card_15",
+      "value_range": "0|1",
+      "source_state": "card_id 15 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 124,
+      "name": "current_winning_card_16",
+      "value_range": "0|1",
+      "source_state": "card_id 16 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 125,
+      "name": "current_winning_card_17",
+      "value_range": "0|1",
+      "source_state": "card_id 17 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 126,
+      "name": "current_winning_card_18",
+      "value_range": "0|1",
+      "source_state": "card_id 18 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 127,
+      "name": "current_winning_card_19",
+      "value_range": "0|1",
+      "source_state": "card_id 19 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 128,
+      "name": "current_winning_card_20",
+      "value_range": "0|1",
+      "source_state": "card_id 20 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 129,
+      "name": "current_winning_card_21",
+      "value_range": "0|1",
+      "source_state": "card_id 21 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 130,
+      "name": "current_winning_card_22",
+      "value_range": "0|1",
+      "source_state": "card_id 22 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 131,
+      "name": "current_winning_card_23",
+      "value_range": "0|1",
+      "source_state": "card_id 23 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 132,
+      "name": "current_winning_card_24",
+      "value_range": "0|1",
+      "source_state": "card_id 24 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 133,
+      "name": "current_winning_card_25",
+      "value_range": "0|1",
+      "source_state": "card_id 25 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 134,
+      "name": "current_winning_card_26",
+      "value_range": "0|1",
+      "source_state": "card_id 26 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 135,
+      "name": "current_winning_card_27",
+      "value_range": "0|1",
+      "source_state": "card_id 27 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 136,
+      "name": "current_winning_card_28",
+      "value_range": "0|1",
+      "source_state": "card_id 28 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 137,
+      "name": "current_winning_card_29",
+      "value_range": "0|1",
+      "source_state": "card_id 29 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 138,
+      "name": "current_winning_card_30",
+      "value_range": "0|1",
+      "source_state": "card_id 30 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 139,
+      "name": "current_winning_card_31",
+      "value_range": "0|1",
+      "source_state": "card_id 31 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 140,
+      "name": "current_winning_card_32",
+      "value_range": "0|1",
+      "source_state": "card_id 32 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 141,
+      "name": "current_winning_card_33",
+      "value_range": "0|1",
+      "source_state": "card_id 33 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 142,
+      "name": "current_winning_card_34",
+      "value_range": "0|1",
+      "source_state": "card_id 34 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 143,
+      "name": "current_winning_card_35",
+      "value_range": "0|1",
+      "source_state": "card_id 35 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 144,
+      "name": "current_winning_card_36",
+      "value_range": "0|1",
+      "source_state": "card_id 36 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 145,
+      "name": "current_winning_card_37",
+      "value_range": "0|1",
+      "source_state": "card_id 37 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 146,
+      "name": "current_winning_card_38",
+      "value_range": "0|1",
+      "source_state": "card_id 38 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 147,
+      "name": "current_winning_card_39",
+      "value_range": "0|1",
+      "source_state": "card_id 39 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 148,
+      "name": "current_winning_card_40",
+      "value_range": "0|1",
+      "source_state": "card_id 40 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 149,
+      "name": "current_winning_card_41",
+      "value_range": "0|1",
+      "source_state": "card_id 41 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 150,
+      "name": "current_winning_card_42",
+      "value_range": "0|1",
+      "source_state": "card_id 42 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 151,
+      "name": "current_winning_card_43",
+      "value_range": "0|1",
+      "source_state": "card_id 43 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 152,
+      "name": "current_winning_card_44",
+      "value_range": "0|1",
+      "source_state": "card_id 44 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 153,
+      "name": "current_winning_card_45",
+      "value_range": "0|1",
+      "source_state": "card_id 45 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 154,
+      "name": "current_winning_card_46",
+      "value_range": "0|1",
+      "source_state": "card_id 46 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 155,
+      "name": "current_winning_card_47",
+      "value_range": "0|1",
+      "source_state": "card_id 47 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 156,
+      "name": "current_winning_card_48",
+      "value_range": "0|1",
+      "source_state": "card_id 48 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 157,
+      "name": "current_winning_card_49",
+      "value_range": "0|1",
+      "source_state": "card_id 49 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 158,
+      "name": "current_winning_card_50",
+      "value_range": "0|1",
+      "source_state": "card_id 50 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 159,
+      "name": "current_winning_card_51",
+      "value_range": "0|1",
+      "source_state": "card_id 51 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 160,
+      "name": "current_winning_card_52",
+      "value_range": "0|1",
+      "source_state": "card_id 52 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 161,
+      "name": "current_winning_card_53",
+      "value_range": "0|1",
+      "source_state": "card_id 53 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 162,
+      "name": "current_winning_card_54",
+      "value_range": "0|1",
+      "source_state": "card_id 54 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 163,
+      "name": "current_winning_card_55",
+      "value_range": "0|1",
+      "source_state": "card_id 55 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 164,
+      "name": "current_winning_card_56",
+      "value_range": "0|1",
+      "source_state": "card_id 56 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 165,
+      "name": "current_winning_card_57",
+      "value_range": "0|1",
+      "source_state": "card_id 57 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 166,
+      "name": "current_winning_card_58",
+      "value_range": "0|1",
+      "source_state": "card_id 58 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 167,
+      "name": "current_winning_card_59",
+      "value_range": "0|1",
+      "source_state": "card_id 59 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 168,
+      "name": "current_winning_card_60",
+      "value_range": "0|1",
+      "source_state": "card_id 60 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 169,
+      "name": "current_winning_card_61",
+      "value_range": "0|1",
+      "source_state": "card_id 61 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 170,
+      "name": "current_winning_card_62",
+      "value_range": "0|1",
+      "source_state": "card_id 62 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 171,
+      "name": "current_winning_card_63",
+      "value_range": "0|1",
+      "source_state": "card_id 63 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 172,
+      "name": "current_winning_card_64",
+      "value_range": "0|1",
+      "source_state": "card_id 64 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 173,
+      "name": "current_winning_card_65",
+      "value_range": "0|1",
+      "source_state": "card_id 65 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 174,
+      "name": "current_winning_card_66",
+      "value_range": "0|1",
+      "source_state": "card_id 66 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 175,
+      "name": "current_winning_card_67",
+      "value_range": "0|1",
+      "source_state": "card_id 67 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 176,
+      "name": "current_winning_card_68",
+      "value_range": "0|1",
+      "source_state": "card_id 68 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 177,
+      "name": "current_winning_card_69",
+      "value_range": "0|1",
+      "source_state": "card_id 69 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 178,
+      "name": "current_winning_card_70",
+      "value_range": "0|1",
+      "source_state": "card_id 70 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 179,
+      "name": "current_winning_card_71",
+      "value_range": "0|1",
+      "source_state": "card_id 71 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 180,
+      "name": "current_winning_card_72",
+      "value_range": "0|1",
+      "source_state": "card_id 72 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 181,
+      "name": "current_winning_card_73",
+      "value_range": "0|1",
+      "source_state": "card_id 73 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 182,
+      "name": "current_winning_card_74",
+      "value_range": "0|1",
+      "source_state": "card_id 74 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 183,
+      "name": "current_winning_card_75",
+      "value_range": "0|1",
+      "source_state": "card_id 75 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 184,
+      "name": "current_winning_card_76",
+      "value_range": "0|1",
+      "source_state": "card_id 76 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 185,
+      "name": "current_winning_card_77",
+      "value_range": "0|1",
+      "source_state": "card_id 77 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 186,
+      "name": "current_winning_card_78",
+      "value_range": "0|1",
+      "source_state": "card_id 78 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 187,
+      "name": "current_winning_card_79",
+      "value_range": "0|1",
+      "source_state": "card_id 79 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 188,
+      "name": "current_winning_card_80",
+      "value_range": "0|1",
+      "source_state": "card_id 80 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 189,
+      "name": "current_winning_card_81",
+      "value_range": "0|1",
+      "source_state": "card_id 81 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 190,
+      "name": "current_winning_card_82",
+      "value_range": "0|1",
+      "source_state": "card_id 82 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 191,
+      "name": "current_winning_card_83",
+      "value_range": "0|1",
+      "source_state": "card_id 83 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 192,
+      "name": "current_winning_card_84",
+      "value_range": "0|1",
+      "source_state": "card_id 84 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 193,
+      "name": "current_winning_card_85",
+      "value_range": "0|1",
+      "source_state": "card_id 85 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 194,
+      "name": "current_winning_card_86",
+      "value_range": "0|1",
+      "source_state": "card_id 86 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 195,
+      "name": "current_winning_card_87",
+      "value_range": "0|1",
+      "source_state": "card_id 87 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 196,
+      "name": "current_winning_card_88",
+      "value_range": "0|1",
+      "source_state": "card_id 88 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 197,
+      "name": "current_winning_card_89",
+      "value_range": "0|1",
+      "source_state": "card_id 89 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 198,
+      "name": "current_winning_card_90",
+      "value_range": "0|1",
+      "source_state": "card_id 90 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 199,
+      "name": "current_winning_card_91",
+      "value_range": "0|1",
+      "source_state": "card_id 91 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 200,
+      "name": "current_winning_card_92",
+      "value_range": "0|1",
+      "source_state": "card_id 92 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 201,
+      "name": "current_winning_card_93",
+      "value_range": "0|1",
+      "source_state": "card_id 93 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 202,
+      "name": "current_winning_card_94",
+      "value_range": "0|1",
+      "source_state": "card_id 94 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 203,
+      "name": "current_winning_card_95",
+      "value_range": "0|1",
+      "source_state": "card_id 95 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 204,
+      "name": "current_winning_card_96",
+      "value_range": "0|1",
+      "source_state": "card_id 96 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 205,
+      "name": "current_winning_card_97",
+      "value_range": "0|1",
+      "source_state": "card_id 97 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 206,
+      "name": "current_winning_card_98",
+      "value_range": "0|1",
+      "source_state": "card_id 98 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 207,
+      "name": "current_winning_card_99",
+      "value_range": "0|1",
+      "source_state": "card_id 99 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 208,
+      "name": "current_winning_card_100",
+      "value_range": "0|1",
+      "source_state": "card_id 100 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 209,
+      "name": "current_winning_card_101",
+      "value_range": "0|1",
+      "source_state": "card_id 101 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 210,
+      "name": "current_winning_card_102",
+      "value_range": "0|1",
+      "source_state": "card_id 102 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 211,
+      "name": "current_winning_card_103",
+      "value_range": "0|1",
+      "source_state": "card_id 103 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 212,
+      "name": "current_winning_card_104",
+      "value_range": "0|1",
+      "source_state": "card_id 104 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 213,
+      "name": "current_winning_card_105",
+      "value_range": "0|1",
+      "source_state": "card_id 105 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 214,
+      "name": "current_winning_card_106",
+      "value_range": "0|1",
+      "source_state": "card_id 106 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 215,
+      "name": "current_winning_card_107",
+      "value_range": "0|1",
+      "source_state": "card_id 107 in current winning declaration",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "only with complete current-winning semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 216,
+      "name": "self_exchange_card_0",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 0",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 217,
+      "name": "self_exchange_card_1",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 1",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 218,
+      "name": "self_exchange_card_2",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 2",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 219,
+      "name": "self_exchange_card_3",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 3",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 220,
+      "name": "self_exchange_card_4",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 4",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 221,
+      "name": "self_exchange_card_5",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 5",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 222,
+      "name": "self_exchange_card_6",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 6",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 223,
+      "name": "self_exchange_card_7",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 7",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 224,
+      "name": "self_exchange_card_8",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 8",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 225,
+      "name": "self_exchange_card_9",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 9",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 226,
+      "name": "self_exchange_card_10",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 10",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 227,
+      "name": "self_exchange_card_11",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 11",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 228,
+      "name": "self_exchange_card_12",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 12",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 229,
+      "name": "self_exchange_card_13",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 13",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 230,
+      "name": "self_exchange_card_14",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 14",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 231,
+      "name": "self_exchange_card_15",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 15",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 232,
+      "name": "self_exchange_card_16",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 16",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 233,
+      "name": "self_exchange_card_17",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 17",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 234,
+      "name": "self_exchange_card_18",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 18",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 235,
+      "name": "self_exchange_card_19",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 19",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 236,
+      "name": "self_exchange_card_20",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 20",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 237,
+      "name": "self_exchange_card_21",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 21",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 238,
+      "name": "self_exchange_card_22",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 22",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 239,
+      "name": "self_exchange_card_23",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 23",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 240,
+      "name": "self_exchange_card_24",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 24",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 241,
+      "name": "self_exchange_card_25",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 25",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 242,
+      "name": "self_exchange_card_26",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 26",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 243,
+      "name": "self_exchange_card_27",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 27",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 244,
+      "name": "self_exchange_card_28",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 28",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 245,
+      "name": "self_exchange_card_29",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 29",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 246,
+      "name": "self_exchange_card_30",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 30",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 247,
+      "name": "self_exchange_card_31",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 31",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 248,
+      "name": "self_exchange_card_32",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 32",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 249,
+      "name": "self_exchange_card_33",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 33",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 250,
+      "name": "self_exchange_card_34",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 34",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 251,
+      "name": "self_exchange_card_35",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 35",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 252,
+      "name": "self_exchange_card_36",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 36",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 253,
+      "name": "self_exchange_card_37",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 37",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 254,
+      "name": "self_exchange_card_38",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 38",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 255,
+      "name": "self_exchange_card_39",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 39",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 256,
+      "name": "self_exchange_card_40",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 40",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 257,
+      "name": "self_exchange_card_41",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 41",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 258,
+      "name": "self_exchange_card_42",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 42",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 259,
+      "name": "self_exchange_card_43",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 43",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 260,
+      "name": "self_exchange_card_44",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 44",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 261,
+      "name": "self_exchange_card_45",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 45",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 262,
+      "name": "self_exchange_card_46",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 46",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 263,
+      "name": "self_exchange_card_47",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 47",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 264,
+      "name": "self_exchange_card_48",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 48",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 265,
+      "name": "self_exchange_card_49",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 49",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 266,
+      "name": "self_exchange_card_50",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 50",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 267,
+      "name": "self_exchange_card_51",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 51",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 268,
+      "name": "self_exchange_card_52",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 52",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 269,
+      "name": "self_exchange_card_53",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 53",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 270,
+      "name": "self_exchange_card_54",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 54",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 271,
+      "name": "self_exchange_card_55",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 55",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 272,
+      "name": "self_exchange_card_56",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 56",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 273,
+      "name": "self_exchange_card_57",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 57",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 274,
+      "name": "self_exchange_card_58",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 58",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 275,
+      "name": "self_exchange_card_59",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 59",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 276,
+      "name": "self_exchange_card_60",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 60",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 277,
+      "name": "self_exchange_card_61",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 61",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 278,
+      "name": "self_exchange_card_62",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 62",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 279,
+      "name": "self_exchange_card_63",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 63",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 280,
+      "name": "self_exchange_card_64",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 64",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 281,
+      "name": "self_exchange_card_65",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 65",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 282,
+      "name": "self_exchange_card_66",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 66",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 283,
+      "name": "self_exchange_card_67",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 67",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 284,
+      "name": "self_exchange_card_68",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 68",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 285,
+      "name": "self_exchange_card_69",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 69",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 286,
+      "name": "self_exchange_card_70",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 70",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 287,
+      "name": "self_exchange_card_71",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 71",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 288,
+      "name": "self_exchange_card_72",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 72",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 289,
+      "name": "self_exchange_card_73",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 73",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 290,
+      "name": "self_exchange_card_74",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 74",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 291,
+      "name": "self_exchange_card_75",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 75",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 292,
+      "name": "self_exchange_card_76",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 76",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 293,
+      "name": "self_exchange_card_77",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 77",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 294,
+      "name": "self_exchange_card_78",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 78",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 295,
+      "name": "self_exchange_card_79",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 79",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 296,
+      "name": "self_exchange_card_80",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 80",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 297,
+      "name": "self_exchange_card_81",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 81",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 298,
+      "name": "self_exchange_card_82",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 82",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 299,
+      "name": "self_exchange_card_83",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 83",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 300,
+      "name": "self_exchange_card_84",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 84",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 301,
+      "name": "self_exchange_card_85",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 85",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 302,
+      "name": "self_exchange_card_86",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 86",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 303,
+      "name": "self_exchange_card_87",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 87",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 304,
+      "name": "self_exchange_card_88",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 88",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 305,
+      "name": "self_exchange_card_89",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 89",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 306,
+      "name": "self_exchange_card_90",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 90",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 307,
+      "name": "self_exchange_card_91",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 91",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 308,
+      "name": "self_exchange_card_92",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 92",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 309,
+      "name": "self_exchange_card_93",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 93",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 310,
+      "name": "self_exchange_card_94",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 94",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 311,
+      "name": "self_exchange_card_95",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 95",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 312,
+      "name": "self_exchange_card_96",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 96",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 313,
+      "name": "self_exchange_card_97",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 97",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 314,
+      "name": "self_exchange_card_98",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 98",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 315,
+      "name": "self_exchange_card_99",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 99",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 316,
+      "name": "self_exchange_card_100",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 100",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 317,
+      "name": "self_exchange_card_101",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 101",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 318,
+      "name": "self_exchange_card_102",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 102",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 319,
+      "name": "self_exchange_card_103",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 103",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 320,
+      "name": "self_exchange_card_104",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 104",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 321,
+      "name": "self_exchange_card_105",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 105",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 322,
+      "name": "self_exchange_card_106",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 106",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 323,
+      "name": "self_exchange_card_107",
+      "value_range": "0|1",
+      "source_state": "observer private tribute selection or outgoing return card 107",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "not before exchange resolves",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 324,
+      "name": "self_prefix_token_slot_0",
+      "value_range": "0..255; 0 means unused slot",
+      "source_state": "private canonical prefix position 0",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "no; runtime interaction state",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 325,
+      "name": "self_prefix_token_slot_1",
+      "value_range": "0..255; 0 means unused slot",
+      "source_state": "private canonical prefix position 1",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "no; runtime interaction state",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 326,
+      "name": "self_prefix_token_slot_2",
+      "value_range": "0..255; 0 means unused slot",
+      "source_state": "private canonical prefix position 2",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "no; runtime interaction state",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 327,
+      "name": "self_prefix_token_slot_3",
+      "value_range": "0..255; 0 means unused slot",
+      "source_state": "private canonical prefix position 3",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "no; runtime interaction state",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 328,
+      "name": "self_prefix_token_slot_4",
+      "value_range": "0..255; 0 means unused slot",
+      "source_state": "private canonical prefix position 4",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "no; runtime interaction state",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 329,
+      "name": "self_prefix_token_slot_5",
+      "value_range": "0..255; 0 means unused slot",
+      "source_state": "private canonical prefix position 5",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "no; runtime interaction state",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 330,
+      "name": "self_prefix_token_slot_6",
+      "value_range": "0..255; 0 means unused slot",
+      "source_state": "private canonical prefix position 6",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "no; runtime interaction state",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 331,
+      "name": "self_prefix_token_slot_7",
+      "value_range": "0..255; 0 means unused slot",
+      "source_state": "private canonical prefix position 7",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "no; runtime interaction state",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 332,
+      "name": "self_prefix_token_slot_8",
+      "value_range": "0..255; 0 means unused slot",
+      "source_state": "private canonical prefix position 8",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "no; runtime interaction state",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 333,
+      "name": "self_prefix_token_slot_9",
+      "value_range": "0..255; 0 means unused slot",
+      "source_state": "private canonical prefix position 9",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "no; runtime interaction state",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 334,
+      "name": "self_prefix_token_slot_10",
+      "value_range": "0..255; 0 means unused slot",
+      "source_state": "private canonical prefix position 10",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "no; runtime interaction state",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 335,
+      "name": "self_prefix_token_slot_11",
+      "value_range": "0..255; 0 means unused slot",
+      "source_state": "private canonical prefix position 11",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "no; runtime interaction state",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 336,
+      "name": "self_prefix_token_slot_12",
+      "value_range": "0..255; 0 means unused slot",
+      "source_state": "private canonical prefix position 12",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "no; runtime interaction state",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 337,
+      "name": "self_prefix_token_slot_13",
+      "value_range": "0..255; 0 means unused slot",
+      "source_state": "private canonical prefix position 13",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "no; runtime interaction state",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 338,
+      "name": "self_prefix_token_slot_14",
+      "value_range": "0..255; 0 means unused slot",
+      "source_state": "private canonical prefix position 14",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "no; runtime interaction state",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 339,
+      "name": "self_prefix_token_slot_15",
+      "value_range": "0..255; 0 means unused slot",
+      "source_state": "private canonical prefix position 15",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "no; runtime interaction state",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 340,
+      "name": "self_prefix_token_slot_16",
+      "value_range": "0..255; 0 means unused slot",
+      "source_state": "private canonical prefix position 16",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "no; runtime interaction state",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 341,
+      "name": "self_prefix_token_slot_17",
+      "value_range": "0..255; 0 means unused slot",
+      "source_state": "private canonical prefix position 17",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "no; runtime interaction state",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 342,
+      "name": "self_prefix_token_slot_18",
+      "value_range": "0..255; 0 means unused slot",
+      "source_state": "private canonical prefix position 18",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "no; runtime interaction state",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 343,
+      "name": "self_prefix_token_slot_19",
+      "value_range": "0..255; 0 means unused slot",
+      "source_state": "private canonical prefix position 19",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "no; runtime interaction state",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 344,
+      "name": "self_prefix_token_slot_20",
+      "value_range": "0..255; 0 means unused slot",
+      "source_state": "private canonical prefix position 20",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "no; runtime interaction state",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 345,
+      "name": "self_prefix_token_slot_21",
+      "value_range": "0..255; 0 means unused slot",
+      "source_state": "private canonical prefix position 21",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "no; runtime interaction state",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 346,
+      "name": "self_prefix_token_slot_22",
+      "value_range": "0..255; 0 means unused slot",
+      "source_state": "private canonical prefix position 22",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "no; runtime interaction state",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 347,
+      "name": "self_prefix_token_slot_23",
+      "value_range": "0..255; 0 means unused slot",
+      "source_state": "private canonical prefix position 23",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "no; runtime interaction state",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 348,
+      "name": "self_prefix_token_slot_24",
+      "value_range": "0..255; 0 means unused slot",
+      "source_state": "private canonical prefix position 24",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "no; runtime interaction state",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 349,
+      "name": "self_prefix_token_slot_25",
+      "value_range": "0..255; 0 means unused slot",
+      "source_state": "private canonical prefix position 25",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "no; runtime interaction state",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 350,
+      "name": "self_prefix_token_slot_26",
+      "value_range": "0..255; 0 means unused slot",
+      "source_state": "private canonical prefix position 26",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "no; runtime interaction state",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 351,
+      "name": "self_prefix_token_slot_27",
+      "value_range": "0..255; 0 means unused slot",
+      "source_state": "private canonical prefix position 27",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "no; runtime interaction state",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 352,
+      "name": "self_prefix_token_slot_28",
+      "value_range": "0..255; 0 means unused slot",
+      "source_state": "private canonical prefix position 28",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "no; runtime interaction state",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 353,
+      "name": "self_prefix_token_slot_29",
+      "value_range": "0..255; 0 means unused slot",
+      "source_state": "private canonical prefix position 29",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "no; runtime interaction state",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 354,
+      "name": "self_prefix_token_slot_30",
+      "value_range": "0..255; 0 means unused slot",
+      "source_state": "private canonical prefix position 30",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "no; runtime interaction state",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 355,
+      "name": "self_prefix_token_slot_31",
+      "value_range": "0..255; 0 means unused slot",
+      "source_state": "private canonical prefix position 31",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "no; runtime interaction state",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 356,
+      "name": "remaining_count_seat_0",
+      "value_range": "0..28 (27 normally; transient 26/28 during exchange)",
+      "source_state": "len(state.hands[0])",
+      "visibility": "public",
+      "guance_status": "available",
+      "derivable_from_history": "yes if history complete",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 357,
+      "name": "remaining_count_seat_1",
+      "value_range": "0..28 (27 normally; transient 26/28 during exchange)",
+      "source_state": "len(state.hands[1])",
+      "visibility": "public",
+      "guance_status": "available",
+      "derivable_from_history": "yes if history complete",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 358,
+      "name": "remaining_count_seat_2",
+      "value_range": "0..28 (27 normally; transient 26/28 during exchange)",
+      "source_state": "len(state.hands[2])",
+      "visibility": "public",
+      "guance_status": "available",
+      "derivable_from_history": "yes if history complete",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 359,
+      "name": "remaining_count_seat_3",
+      "value_range": "0..28 (27 normally; transient 26/28 during exchange)",
+      "source_state": "len(state.hands[3])",
+      "visibility": "public",
+      "guance_status": "available",
+      "derivable_from_history": "yes if history complete",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 360,
+      "name": "finishing_rank_seat_0",
+      "value_range": "0..4; 0=unfinished",
+      "source_state": "state.ranking[0]",
+      "visibility": "public",
+      "guance_status": "capture may have internally; canonical view omits",
+      "derivable_from_history": "yes with finish events",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 361,
+      "name": "finishing_rank_seat_1",
+      "value_range": "0..4; 0=unfinished",
+      "source_state": "state.ranking[1]",
+      "visibility": "public",
+      "guance_status": "capture may have internally; canonical view omits",
+      "derivable_from_history": "yes with finish events",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 362,
+      "name": "finishing_rank_seat_2",
+      "value_range": "0..4; 0=unfinished",
+      "source_state": "state.ranking[2]",
+      "visibility": "public",
+      "guance_status": "capture may have internally; canonical view omits",
+      "derivable_from_history": "yes with finish events",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 363,
+      "name": "finishing_rank_seat_3",
+      "value_range": "0..4; 0=unfinished",
+      "source_state": "state.ranking[3]",
+      "visibility": "public",
+      "guance_status": "capture may have internally; canonical view omits",
+      "derivable_from_history": "yes with finish events",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 364,
+      "name": "observer_is_seat_0",
+      "value_range": "0|1",
+      "source_state": "observer seat 0",
+      "visibility": "public+self context",
+      "guance_status": "derivable",
+      "derivable_from_history": "yes",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 365,
+      "name": "observer_is_seat_1",
+      "value_range": "0|1",
+      "source_state": "observer seat 1",
+      "visibility": "public+self context",
+      "guance_status": "derivable",
+      "derivable_from_history": "yes",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 366,
+      "name": "observer_is_seat_2",
+      "value_range": "0|1",
+      "source_state": "observer seat 2",
+      "visibility": "public+self context",
+      "guance_status": "derivable",
+      "derivable_from_history": "yes",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 367,
+      "name": "observer_is_seat_3",
+      "value_range": "0|1",
+      "source_state": "observer seat 3",
+      "visibility": "public+self context",
+      "guance_status": "derivable",
+      "derivable_from_history": "yes",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 368,
+      "name": "active_is_seat_0",
+      "value_range": "0|1",
+      "source_state": "active_seat == 0",
+      "visibility": "public",
+      "guance_status": "available in play",
+      "derivable_from_history": "yes",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 369,
+      "name": "active_is_seat_1",
+      "value_range": "0|1",
+      "source_state": "active_seat == 1",
+      "visibility": "public",
+      "guance_status": "available in play",
+      "derivable_from_history": "yes",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 370,
+      "name": "active_is_seat_2",
+      "value_range": "0|1",
+      "source_state": "active_seat == 2",
+      "visibility": "public",
+      "guance_status": "available in play",
+      "derivable_from_history": "yes",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 371,
+      "name": "active_is_seat_3",
+      "value_range": "0|1",
+      "source_state": "active_seat == 3",
+      "visibility": "public",
+      "guance_status": "available in play",
+      "derivable_from_history": "yes",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 372,
+      "name": "leader_is_seat_0",
+      "value_range": "0|1",
+      "source_state": "leader_seat == 0",
+      "visibility": "public",
+      "guance_status": "missing",
+      "derivable_from_history": "only with complete trick semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 373,
+      "name": "leader_is_seat_1",
+      "value_range": "0|1",
+      "source_state": "leader_seat == 1",
+      "visibility": "public",
+      "guance_status": "missing",
+      "derivable_from_history": "only with complete trick semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 374,
+      "name": "leader_is_seat_2",
+      "value_range": "0|1",
+      "source_state": "leader_seat == 2",
+      "visibility": "public",
+      "guance_status": "missing",
+      "derivable_from_history": "only with complete trick semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 375,
+      "name": "leader_is_seat_3",
+      "value_range": "0|1",
+      "source_state": "leader_seat == 3",
+      "visibility": "public",
+      "guance_status": "missing",
+      "derivable_from_history": "only with complete trick semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 376,
+      "name": "current_winner_is_seat_0",
+      "value_range": "0|1",
+      "source_state": "current_winner_seat == 0",
+      "visibility": "public",
+      "guance_status": "partially derivable",
+      "derivable_from_history": "only if history unambiguous",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 377,
+      "name": "current_winner_is_seat_1",
+      "value_range": "0|1",
+      "source_state": "current_winner_seat == 1",
+      "visibility": "public",
+      "guance_status": "partially derivable",
+      "derivable_from_history": "only if history unambiguous",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 378,
+      "name": "current_winner_is_seat_2",
+      "value_range": "0|1",
+      "source_state": "current_winner_seat == 2",
+      "visibility": "public",
+      "guance_status": "partially derivable",
+      "derivable_from_history": "only if history unambiguous",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 379,
+      "name": "current_winner_is_seat_3",
+      "value_range": "0|1",
+      "source_state": "current_winner_seat == 3",
+      "visibility": "public",
+      "guance_status": "partially derivable",
+      "derivable_from_history": "only if history unambiguous",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 380,
+      "name": "emptied_is_seat_0",
+      "value_range": "0|1",
+      "source_state": "seat 0 is emptied",
+      "visibility": "public",
+      "guance_status": "canonical view omits",
+      "derivable_from_history": "yes with finish events",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 381,
+      "name": "emptied_is_seat_1",
+      "value_range": "0|1",
+      "source_state": "seat 1 is emptied",
+      "visibility": "public",
+      "guance_status": "canonical view omits",
+      "derivable_from_history": "yes with finish events",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 382,
+      "name": "emptied_is_seat_2",
+      "value_range": "0|1",
+      "source_state": "seat 2 is emptied",
+      "visibility": "public",
+      "guance_status": "canonical view omits",
+      "derivable_from_history": "yes with finish events",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 383,
+      "name": "emptied_is_seat_3",
+      "value_range": "0|1",
+      "source_state": "seat 3 is emptied",
+      "visibility": "public",
+      "guance_status": "canonical view omits",
+      "derivable_from_history": "yes with finish events",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 384,
+      "name": "phase_play",
+      "value_range": "0|1",
+      "source_state": "phase == PLAY",
+      "visibility": "public",
+      "guance_status": "only play exposed",
+      "derivable_from_history": "no for exchange phases",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 385,
+      "name": "phase_tribute",
+      "value_range": "0|1",
+      "source_state": "phase == TRIBUTE",
+      "visibility": "public",
+      "guance_status": "only play exposed",
+      "derivable_from_history": "no for exchange phases",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 386,
+      "name": "phase_return",
+      "value_range": "0|1",
+      "source_state": "phase == RETURN",
+      "visibility": "public",
+      "guance_status": "only play exposed",
+      "derivable_from_history": "no for exchange phases",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 387,
+      "name": "phase_terminal",
+      "value_range": "0|1",
+      "source_state": "phase == TERMINAL",
+      "visibility": "public",
+      "guance_status": "only play exposed",
+      "derivable_from_history": "no for exchange phases",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 388,
+      "name": "level_rank_three",
+      "value_range": "0|1",
+      "source_state": "level rank == THREE",
+      "visibility": "public",
+      "guance_status": "available after rank mapping",
+      "derivable_from_history": "yes",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 389,
+      "name": "level_rank_four",
+      "value_range": "0|1",
+      "source_state": "level rank == FOUR",
+      "visibility": "public",
+      "guance_status": "available after rank mapping",
+      "derivable_from_history": "yes",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 390,
+      "name": "level_rank_five",
+      "value_range": "0|1",
+      "source_state": "level rank == FIVE",
+      "visibility": "public",
+      "guance_status": "available after rank mapping",
+      "derivable_from_history": "yes",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 391,
+      "name": "level_rank_six",
+      "value_range": "0|1",
+      "source_state": "level rank == SIX",
+      "visibility": "public",
+      "guance_status": "available after rank mapping",
+      "derivable_from_history": "yes",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 392,
+      "name": "level_rank_seven",
+      "value_range": "0|1",
+      "source_state": "level rank == SEVEN",
+      "visibility": "public",
+      "guance_status": "available after rank mapping",
+      "derivable_from_history": "yes",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 393,
+      "name": "level_rank_eight",
+      "value_range": "0|1",
+      "source_state": "level rank == EIGHT",
+      "visibility": "public",
+      "guance_status": "available after rank mapping",
+      "derivable_from_history": "yes",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 394,
+      "name": "level_rank_nine",
+      "value_range": "0|1",
+      "source_state": "level rank == NINE",
+      "visibility": "public",
+      "guance_status": "available after rank mapping",
+      "derivable_from_history": "yes",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 395,
+      "name": "level_rank_ten",
+      "value_range": "0|1",
+      "source_state": "level rank == TEN",
+      "visibility": "public",
+      "guance_status": "available after rank mapping",
+      "derivable_from_history": "yes",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 396,
+      "name": "level_rank_jack",
+      "value_range": "0|1",
+      "source_state": "level rank == JACK",
+      "visibility": "public",
+      "guance_status": "available after rank mapping",
+      "derivable_from_history": "yes",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 397,
+      "name": "level_rank_queen",
+      "value_range": "0|1",
+      "source_state": "level rank == QUEEN",
+      "visibility": "public",
+      "guance_status": "available after rank mapping",
+      "derivable_from_history": "yes",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 398,
+      "name": "level_rank_king",
+      "value_range": "0|1",
+      "source_state": "level rank == KING",
+      "visibility": "public",
+      "guance_status": "available after rank mapping",
+      "derivable_from_history": "yes",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 399,
+      "name": "level_rank_ace",
+      "value_range": "0|1",
+      "source_state": "level rank == ACE",
+      "visibility": "public",
+      "guance_status": "available after rank mapping",
+      "derivable_from_history": "yes",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 400,
+      "name": "level_rank_two",
+      "value_range": "0|1",
+      "source_state": "level rank == TWO",
+      "visibility": "public",
+      "guance_status": "available after rank mapping",
+      "derivable_from_history": "yes",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 401,
+      "name": "consecutive_passes_bucket_0",
+      "value_range": "0|1",
+      "source_state": "min(consecutive_passes,3)==0",
+      "visibility": "public",
+      "guance_status": "derivable if history complete",
+      "derivable_from_history": "yes",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 402,
+      "name": "consecutive_passes_bucket_1",
+      "value_range": "0|1",
+      "source_state": "min(consecutive_passes,3)==1",
+      "visibility": "public",
+      "guance_status": "derivable if history complete",
+      "derivable_from_history": "yes",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 403,
+      "name": "consecutive_passes_bucket_2",
+      "value_range": "0|1",
+      "source_state": "min(consecutive_passes,3)==2",
+      "visibility": "public",
+      "guance_status": "derivable if history complete",
+      "derivable_from_history": "yes",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 404,
+      "name": "consecutive_passes_bucket_3",
+      "value_range": "0|1",
+      "source_state": "min(consecutive_passes,3)==3",
+      "visibility": "public",
+      "guance_status": "derivable if history complete",
+      "derivable_from_history": "yes",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 405,
+      "name": "observer_team_0",
+      "value_range": "0|1",
+      "source_state": "TEAM_OF[observer]==0",
+      "visibility": "public",
+      "guance_status": "derivable",
+      "derivable_from_history": "yes",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 406,
+      "name": "observer_team_1",
+      "value_range": "0|1",
+      "source_state": "TEAM_OF[observer]==1",
+      "visibility": "public",
+      "guance_status": "derivable",
+      "derivable_from_history": "yes",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 407,
+      "name": "previous_winner_team_0",
+      "value_range": "0|1",
+      "source_state": "previous_result.winner_team==0",
+      "visibility": "public between hands",
+      "guance_status": "missing",
+      "derivable_from_history": "no",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 408,
+      "name": "previous_winner_team_1",
+      "value_range": "0|1",
+      "source_state": "previous_result.winner_team==1",
+      "visibility": "public between hands",
+      "guance_status": "missing",
+      "derivable_from_history": "no",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 409,
+      "name": "previous_outcome_double_down",
+      "value_range": "0|1",
+      "source_state": "previous_result.outcome_class==DOUBLE_DOWN",
+      "visibility": "public between hands",
+      "guance_status": "missing",
+      "derivable_from_history": "no",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 410,
+      "name": "previous_outcome_head_third",
+      "value_range": "0|1",
+      "source_state": "previous_result.outcome_class==HEAD_THIRD",
+      "visibility": "public between hands",
+      "guance_status": "missing",
+      "derivable_from_history": "no",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 411,
+      "name": "previous_outcome_head_last",
+      "value_range": "0|1",
+      "source_state": "previous_result.outcome_class==HEAD_LAST",
+      "visibility": "public between hands",
+      "guance_status": "missing",
+      "derivable_from_history": "no",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 412,
+      "name": "previous_finishing_rank_seat_0",
+      "value_range": "0..4",
+      "source_state": "previous_result.ranking[0]",
+      "visibility": "public between hands",
+      "guance_status": "missing",
+      "derivable_from_history": "no",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 413,
+      "name": "previous_finishing_rank_seat_1",
+      "value_range": "0..4",
+      "source_state": "previous_result.ranking[1]",
+      "visibility": "public between hands",
+      "guance_status": "missing",
+      "derivable_from_history": "no",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 414,
+      "name": "previous_finishing_rank_seat_2",
+      "value_range": "0..4",
+      "source_state": "previous_result.ranking[2]",
+      "visibility": "public between hands",
+      "guance_status": "missing",
+      "derivable_from_history": "no",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 415,
+      "name": "previous_finishing_rank_seat_3",
+      "value_range": "0..4",
+      "source_state": "previous_result.ranking[3]",
+      "visibility": "public between hands",
+      "guance_status": "missing",
+      "derivable_from_history": "no",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 416,
+      "name": "current_family_single",
+      "value_range": "0|1",
+      "source_state": "current_winning.kind==SINGLE",
+      "visibility": "public",
+      "guance_status": "combo_type insufficient/unverified",
+      "derivable_from_history": "only with exact declaration",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 417,
+      "name": "current_family_pair",
+      "value_range": "0|1",
+      "source_state": "current_winning.kind==PAIR",
+      "visibility": "public",
+      "guance_status": "combo_type insufficient/unverified",
+      "derivable_from_history": "only with exact declaration",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 418,
+      "name": "current_family_triple",
+      "value_range": "0|1",
+      "source_state": "current_winning.kind==TRIPLE",
+      "visibility": "public",
+      "guance_status": "combo_type insufficient/unverified",
+      "derivable_from_history": "only with exact declaration",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 419,
+      "name": "current_family_full_house",
+      "value_range": "0|1",
+      "source_state": "current_winning.kind==FULL_HOUSE",
+      "visibility": "public",
+      "guance_status": "combo_type insufficient/unverified",
+      "derivable_from_history": "only with exact declaration",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 420,
+      "name": "current_family_straight",
+      "value_range": "0|1",
+      "source_state": "current_winning.kind==STRAIGHT",
+      "visibility": "public",
+      "guance_status": "combo_type insufficient/unverified",
+      "derivable_from_history": "only with exact declaration",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 421,
+      "name": "current_family_pair_sequence",
+      "value_range": "0|1",
+      "source_state": "current_winning.kind==PAIR_SEQUENCE",
+      "visibility": "public",
+      "guance_status": "combo_type insufficient/unverified",
+      "derivable_from_history": "only with exact declaration",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 422,
+      "name": "current_family_triple_sequence",
+      "value_range": "0|1",
+      "source_state": "current_winning.kind==TRIPLE_SEQUENCE",
+      "visibility": "public",
+      "guance_status": "combo_type insufficient/unverified",
+      "derivable_from_history": "only with exact declaration",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 423,
+      "name": "current_family_rank_bomb",
+      "value_range": "0|1",
+      "source_state": "current_winning.kind==RANK_BOMB",
+      "visibility": "public",
+      "guance_status": "combo_type insufficient/unverified",
+      "derivable_from_history": "only with exact declaration",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 424,
+      "name": "current_family_straight_flush",
+      "value_range": "0|1",
+      "source_state": "current_winning.kind==STRAIGHT_FLUSH",
+      "visibility": "public",
+      "guance_status": "combo_type insufficient/unverified",
+      "derivable_from_history": "only with exact declaration",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 425,
+      "name": "current_family_four_kings",
+      "value_range": "0|1",
+      "source_state": "current_winning.kind==FOUR_KINGS",
+      "visibility": "public",
+      "guance_status": "combo_type insufficient/unverified",
+      "derivable_from_history": "only with exact declaration",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 426,
+      "name": "current_comparison_rank_three",
+      "value_range": "0|1",
+      "source_state": "current_winning.comparison_rank==THREE",
+      "visibility": "public",
+      "guance_status": "missing",
+      "derivable_from_history": "only with exact declaration/wild assignment",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 427,
+      "name": "current_comparison_rank_four",
+      "value_range": "0|1",
+      "source_state": "current_winning.comparison_rank==FOUR",
+      "visibility": "public",
+      "guance_status": "missing",
+      "derivable_from_history": "only with exact declaration/wild assignment",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 428,
+      "name": "current_comparison_rank_five",
+      "value_range": "0|1",
+      "source_state": "current_winning.comparison_rank==FIVE",
+      "visibility": "public",
+      "guance_status": "missing",
+      "derivable_from_history": "only with exact declaration/wild assignment",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 429,
+      "name": "current_comparison_rank_six",
+      "value_range": "0|1",
+      "source_state": "current_winning.comparison_rank==SIX",
+      "visibility": "public",
+      "guance_status": "missing",
+      "derivable_from_history": "only with exact declaration/wild assignment",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 430,
+      "name": "current_comparison_rank_seven",
+      "value_range": "0|1",
+      "source_state": "current_winning.comparison_rank==SEVEN",
+      "visibility": "public",
+      "guance_status": "missing",
+      "derivable_from_history": "only with exact declaration/wild assignment",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 431,
+      "name": "current_comparison_rank_eight",
+      "value_range": "0|1",
+      "source_state": "current_winning.comparison_rank==EIGHT",
+      "visibility": "public",
+      "guance_status": "missing",
+      "derivable_from_history": "only with exact declaration/wild assignment",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 432,
+      "name": "current_comparison_rank_nine",
+      "value_range": "0|1",
+      "source_state": "current_winning.comparison_rank==NINE",
+      "visibility": "public",
+      "guance_status": "missing",
+      "derivable_from_history": "only with exact declaration/wild assignment",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 433,
+      "name": "current_comparison_rank_ten",
+      "value_range": "0|1",
+      "source_state": "current_winning.comparison_rank==TEN",
+      "visibility": "public",
+      "guance_status": "missing",
+      "derivable_from_history": "only with exact declaration/wild assignment",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 434,
+      "name": "current_comparison_rank_jack",
+      "value_range": "0|1",
+      "source_state": "current_winning.comparison_rank==JACK",
+      "visibility": "public",
+      "guance_status": "missing",
+      "derivable_from_history": "only with exact declaration/wild assignment",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 435,
+      "name": "current_comparison_rank_queen",
+      "value_range": "0|1",
+      "source_state": "current_winning.comparison_rank==QUEEN",
+      "visibility": "public",
+      "guance_status": "missing",
+      "derivable_from_history": "only with exact declaration/wild assignment",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 436,
+      "name": "current_comparison_rank_king",
+      "value_range": "0|1",
+      "source_state": "current_winning.comparison_rank==KING",
+      "visibility": "public",
+      "guance_status": "missing",
+      "derivable_from_history": "only with exact declaration/wild assignment",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 437,
+      "name": "current_comparison_rank_ace",
+      "value_range": "0|1",
+      "source_state": "current_winning.comparison_rank==ACE",
+      "visibility": "public",
+      "guance_status": "missing",
+      "derivable_from_history": "only with exact declaration/wild assignment",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 438,
+      "name": "current_comparison_rank_two",
+      "value_range": "0|1",
+      "source_state": "current_winning.comparison_rank==TWO",
+      "visibility": "public",
+      "guance_status": "missing",
+      "derivable_from_history": "only with exact declaration/wild assignment",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 439,
+      "name": "current_comparison_rank_small_joker",
+      "value_range": "0|1",
+      "source_state": "current_winning.comparison_rank==SMALL_JOKER",
+      "visibility": "public",
+      "guance_status": "missing",
+      "derivable_from_history": "only with exact declaration/wild assignment",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 440,
+      "name": "current_comparison_rank_big_joker",
+      "value_range": "0|1",
+      "source_state": "current_winning.comparison_rank==BIG_JOKER",
+      "visibility": "public",
+      "guance_status": "missing",
+      "derivable_from_history": "only with exact declaration/wild assignment",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 441,
+      "name": "current_size_0",
+      "value_range": "0|1",
+      "source_state": "current winning physical card count == 0",
+      "visibility": "public",
+      "guance_status": "derivable from lead_action cards",
+      "derivable_from_history": "yes",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 442,
+      "name": "current_size_1",
+      "value_range": "0|1",
+      "source_state": "current winning physical card count == 1",
+      "visibility": "public",
+      "guance_status": "derivable from lead_action cards",
+      "derivable_from_history": "yes",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 443,
+      "name": "current_size_2",
+      "value_range": "0|1",
+      "source_state": "current winning physical card count == 2",
+      "visibility": "public",
+      "guance_status": "derivable from lead_action cards",
+      "derivable_from_history": "yes",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 444,
+      "name": "current_size_3",
+      "value_range": "0|1",
+      "source_state": "current winning physical card count == 3",
+      "visibility": "public",
+      "guance_status": "derivable from lead_action cards",
+      "derivable_from_history": "yes",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 445,
+      "name": "current_size_4",
+      "value_range": "0|1",
+      "source_state": "current winning physical card count == 4",
+      "visibility": "public",
+      "guance_status": "derivable from lead_action cards",
+      "derivable_from_history": "yes",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 446,
+      "name": "current_size_5",
+      "value_range": "0|1",
+      "source_state": "current winning physical card count == 5",
+      "visibility": "public",
+      "guance_status": "derivable from lead_action cards",
+      "derivable_from_history": "yes",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 447,
+      "name": "current_size_6",
+      "value_range": "0|1",
+      "source_state": "current winning physical card count == 6",
+      "visibility": "public",
+      "guance_status": "derivable from lead_action cards",
+      "derivable_from_history": "yes",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 448,
+      "name": "current_size_7",
+      "value_range": "0|1",
+      "source_state": "current winning physical card count == 7",
+      "visibility": "public",
+      "guance_status": "derivable from lead_action cards",
+      "derivable_from_history": "yes",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 449,
+      "name": "current_size_8",
+      "value_range": "0|1",
+      "source_state": "current winning physical card count == 8",
+      "visibility": "public",
+      "guance_status": "derivable from lead_action cards",
+      "derivable_from_history": "yes",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 450,
+      "name": "current_size_9",
+      "value_range": "0|1",
+      "source_state": "current winning physical card count == 9",
+      "visibility": "public",
+      "guance_status": "derivable from lead_action cards",
+      "derivable_from_history": "yes",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 451,
+      "name": "current_size_10",
+      "value_range": "0|1",
+      "source_state": "current winning physical card count == 10",
+      "visibility": "public",
+      "guance_status": "derivable from lead_action cards",
+      "derivable_from_history": "yes",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 452,
+      "name": "tribute_donor_seat_0",
+      "value_range": "0|1",
+      "source_state": "seat 0 is tribute donor",
+      "visibility": "public between hands",
+      "guance_status": "missing",
+      "derivable_from_history": "requires previous result",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 453,
+      "name": "tribute_donor_seat_1",
+      "value_range": "0|1",
+      "source_state": "seat 1 is tribute donor",
+      "visibility": "public between hands",
+      "guance_status": "missing",
+      "derivable_from_history": "requires previous result",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 454,
+      "name": "tribute_donor_seat_2",
+      "value_range": "0|1",
+      "source_state": "seat 2 is tribute donor",
+      "visibility": "public between hands",
+      "guance_status": "missing",
+      "derivable_from_history": "requires previous result",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 455,
+      "name": "tribute_donor_seat_3",
+      "value_range": "0|1",
+      "source_state": "seat 3 is tribute donor",
+      "visibility": "public between hands",
+      "guance_status": "missing",
+      "derivable_from_history": "requires previous result",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 456,
+      "name": "tribute_order_position_0",
+      "value_range": "0..4; 0=unset, seat encoded seat+1",
+      "source_state": "tribute_order[0]",
+      "visibility": "public after resolution",
+      "guance_status": "missing",
+      "derivable_from_history": "requires resolved exchange",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 457,
+      "name": "tribute_order_position_1",
+      "value_range": "0..4; 0=unset, seat encoded seat+1",
+      "source_state": "tribute_order[1]",
+      "visibility": "public after resolution",
+      "guance_status": "missing",
+      "derivable_from_history": "requires resolved exchange",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 458,
+      "name": "tribute_order_position_2",
+      "value_range": "0..4; 0=unset, seat encoded seat+1",
+      "source_state": "tribute_order[2]",
+      "visibility": "public after resolution",
+      "guance_status": "missing",
+      "derivable_from_history": "requires resolved exchange",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 459,
+      "name": "tribute_order_position_3",
+      "value_range": "0..4; 0=unset, seat encoded seat+1",
+      "source_state": "tribute_order[3]",
+      "visibility": "public after resolution",
+      "guance_status": "missing",
+      "derivable_from_history": "requires resolved exchange",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 460,
+      "name": "token_step_bit_0",
+      "value_range": "0|1",
+      "source_state": "LSB-first bit 0 of token_step; only active observer",
+      "visibility": "public counter + observer gate",
+      "guance_status": "missing",
+      "derivable_from_history": "requires exact token history",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 461,
+      "name": "token_step_bit_1",
+      "value_range": "0|1",
+      "source_state": "LSB-first bit 1 of token_step; only active observer",
+      "visibility": "public counter + observer gate",
+      "guance_status": "missing",
+      "derivable_from_history": "requires exact token history",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 462,
+      "name": "token_step_bit_2",
+      "value_range": "0|1",
+      "source_state": "LSB-first bit 2 of token_step; only active observer",
+      "visibility": "public counter + observer gate",
+      "guance_status": "missing",
+      "derivable_from_history": "requires exact token history",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 463,
+      "name": "token_step_bit_3",
+      "value_range": "0|1",
+      "source_state": "LSB-first bit 3 of token_step; only active observer",
+      "visibility": "public counter + observer gate",
+      "guance_status": "missing",
+      "derivable_from_history": "requires exact token history",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 464,
+      "name": "token_step_bit_4",
+      "value_range": "0|1",
+      "source_state": "LSB-first bit 4 of token_step; only active observer",
+      "visibility": "public counter + observer gate",
+      "guance_status": "missing",
+      "derivable_from_history": "requires exact token history",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 465,
+      "name": "token_step_bit_5",
+      "value_range": "0|1",
+      "source_state": "LSB-first bit 5 of token_step; only active observer",
+      "visibility": "public counter + observer gate",
+      "guance_status": "missing",
+      "derivable_from_history": "requires exact token history",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 466,
+      "name": "token_step_bit_6",
+      "value_range": "0|1",
+      "source_state": "LSB-first bit 6 of token_step; only active observer",
+      "visibility": "public counter + observer gate",
+      "guance_status": "missing",
+      "derivable_from_history": "requires exact token history",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 467,
+      "name": "token_step_bit_7",
+      "value_range": "0|1",
+      "source_state": "LSB-first bit 7 of token_step; only active observer",
+      "visibility": "public counter + observer gate",
+      "guance_status": "missing",
+      "derivable_from_history": "requires exact token history",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 468,
+      "name": "token_step_bit_8",
+      "value_range": "0|1",
+      "source_state": "LSB-first bit 8 of token_step; only active observer",
+      "visibility": "public counter + observer gate",
+      "guance_status": "missing",
+      "derivable_from_history": "requires exact token history",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 469,
+      "name": "token_step_bit_9",
+      "value_range": "0|1",
+      "source_state": "LSB-first bit 9 of token_step; only active observer",
+      "visibility": "public counter + observer gate",
+      "guance_status": "missing",
+      "derivable_from_history": "requires exact token history",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 470,
+      "name": "token_step_bit_10",
+      "value_range": "0|1",
+      "source_state": "LSB-first bit 10 of token_step; only active observer",
+      "visibility": "public counter + observer gate",
+      "guance_status": "missing",
+      "derivable_from_history": "requires exact token history",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 471,
+      "name": "token_step_bit_11",
+      "value_range": "0|1",
+      "source_state": "LSB-first bit 11 of token_step; only active observer",
+      "visibility": "public counter + observer gate",
+      "guance_status": "missing",
+      "derivable_from_history": "requires exact token history",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 472,
+      "name": "token_step_bit_12",
+      "value_range": "0|1",
+      "source_state": "LSB-first bit 12 of token_step; only active observer",
+      "visibility": "public counter + observer gate",
+      "guance_status": "missing",
+      "derivable_from_history": "requires exact token history",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 473,
+      "name": "committed_step_bit_0",
+      "value_range": "0|1",
+      "source_state": "LSB-first bit 0 of committed_step",
+      "visibility": "public counter",
+      "guance_status": "missing",
+      "derivable_from_history": "requires complete commits",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 474,
+      "name": "committed_step_bit_1",
+      "value_range": "0|1",
+      "source_state": "LSB-first bit 1 of committed_step",
+      "visibility": "public counter",
+      "guance_status": "missing",
+      "derivable_from_history": "requires complete commits",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 475,
+      "name": "committed_step_bit_2",
+      "value_range": "0|1",
+      "source_state": "LSB-first bit 2 of committed_step",
+      "visibility": "public counter",
+      "guance_status": "missing",
+      "derivable_from_history": "requires complete commits",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 476,
+      "name": "committed_step_bit_3",
+      "value_range": "0|1",
+      "source_state": "LSB-first bit 3 of committed_step",
+      "visibility": "public counter",
+      "guance_status": "missing",
+      "derivable_from_history": "requires complete commits",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 477,
+      "name": "committed_step_bit_4",
+      "value_range": "0|1",
+      "source_state": "LSB-first bit 4 of committed_step",
+      "visibility": "public counter",
+      "guance_status": "missing",
+      "derivable_from_history": "requires complete commits",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 478,
+      "name": "committed_step_bit_5",
+      "value_range": "0|1",
+      "source_state": "LSB-first bit 5 of committed_step",
+      "visibility": "public counter",
+      "guance_status": "missing",
+      "derivable_from_history": "requires complete commits",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 479,
+      "name": "committed_step_bit_6",
+      "value_range": "0|1",
+      "source_state": "LSB-first bit 6 of committed_step",
+      "visibility": "public counter",
+      "guance_status": "missing",
+      "derivable_from_history": "requires complete commits",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 480,
+      "name": "committed_step_bit_7",
+      "value_range": "0|1",
+      "source_state": "LSB-first bit 7 of committed_step",
+      "visibility": "public counter",
+      "guance_status": "missing",
+      "derivable_from_history": "requires complete commits",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 481,
+      "name": "committed_step_bit_8",
+      "value_range": "0|1",
+      "source_state": "LSB-first bit 8 of committed_step",
+      "visibility": "public counter",
+      "guance_status": "missing",
+      "derivable_from_history": "requires complete commits",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 482,
+      "name": "committed_step_bit_9",
+      "value_range": "0|1",
+      "source_state": "LSB-first bit 9 of committed_step",
+      "visibility": "public counter",
+      "guance_status": "missing",
+      "derivable_from_history": "requires complete commits",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 483,
+      "name": "committed_step_bit_10",
+      "value_range": "0|1",
+      "source_state": "LSB-first bit 10 of committed_step",
+      "visibility": "public counter",
+      "guance_status": "missing",
+      "derivable_from_history": "requires complete commits",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 484,
+      "name": "committed_step_bit_11",
+      "value_range": "0|1",
+      "source_state": "LSB-first bit 11 of committed_step",
+      "visibility": "public counter",
+      "guance_status": "missing",
+      "derivable_from_history": "requires complete commits",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 485,
+      "name": "committed_step_bit_12",
+      "value_range": "0|1",
+      "source_state": "LSB-first bit 12 of committed_step",
+      "visibility": "public counter",
+      "guance_status": "missing",
+      "derivable_from_history": "requires complete commits",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 486,
+      "name": "previous_tribute_cancelled",
+      "value_range": "0|1",
+      "source_state": "previous_result.tribute_cancelled",
+      "visibility": "public between hands",
+      "guance_status": "missing",
+      "derivable_from_history": "no",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 487,
+      "name": "play_or_terminal_phase",
+      "value_range": "0|1",
+      "source_state": "phase in PLAY or TERMINAL",
+      "visibility": "public",
+      "guance_status": "partially available",
+      "derivable_from_history": "no for exchange",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 488,
+      "name": "anti_tribute",
+      "value_range": "0|1",
+      "source_state": "state.anti_tribute",
+      "visibility": "public between hands",
+      "guance_status": "missing",
+      "derivable_from_history": "requires verified outcome",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 489,
+      "name": "current_winning_present",
+      "value_range": "0|1",
+      "source_state": "current_winning is not None",
+      "visibility": "public",
+      "guance_status": "available as !free_lead",
+      "derivable_from_history": "yes",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 490,
+      "name": "self_prefix_length",
+      "value_range": "0..32",
+      "source_state": "private prefix length for active observer",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "no",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 491,
+      "name": "observer_is_active",
+      "value_range": "0|1",
+      "source_state": "observer == active_seat",
+      "visibility": "public+self",
+      "guance_status": "derivable",
+      "derivable_from_history": "yes",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 492,
+      "name": "observer_finished",
+      "value_range": "0|1",
+      "source_state": "observer in finished_ranks",
+      "visibility": "public",
+      "guance_status": "not exposed",
+      "derivable_from_history": "yes with finish events",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 493,
+      "name": "observer_emptied",
+      "value_range": "0|1",
+      "source_state": "observer in emptied_seats",
+      "visibility": "public",
+      "guance_status": "not exposed",
+      "derivable_from_history": "yes with finish events",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 494,
+      "name": "return_obligations_present",
+      "value_range": "0|1",
+      "source_state": "bool(return_obligations)",
+      "visibility": "public exchange",
+      "guance_status": "missing",
+      "derivable_from_history": "requires exchange protocol",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 495,
+      "name": "observer_has_tribute_selection",
+      "value_range": "0|1",
+      "source_state": "observer in tribute_selections",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "no",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 496,
+      "name": "observer_has_outgoing_return_transfer",
+      "value_range": "0|1",
+      "source_state": "observer selected outgoing return",
+      "visibility": "self-private",
+      "guance_status": "missing",
+      "derivable_from_history": "no",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 497,
+      "name": "previous_result_present",
+      "value_range": "0|1",
+      "source_state": "previous_result is not None",
+      "visibility": "public between hands",
+      "guance_status": "missing",
+      "derivable_from_history": "no",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 498,
+      "name": "observer_is_current_winner",
+      "value_range": "0|1",
+      "source_state": "current_winner_seat == observer",
+      "visibility": "public+self",
+      "guance_status": "partially derivable",
+      "derivable_from_history": "if lead exact",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 499,
+      "name": "observer_is_leader",
+      "value_range": "0|1",
+      "source_state": "leader_seat == observer",
+      "visibility": "public+self",
+      "guance_status": "missing",
+      "derivable_from_history": "complete trick semantics",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 500,
+      "name": "active_same_team_as_observer",
+      "value_range": "0|1",
+      "source_state": "active and observer same team",
+      "visibility": "public+self",
+      "guance_status": "derivable",
+      "derivable_from_history": "yes",
+      "missing_safe_behavior": "unsupported"
+    },
+    {
+      "index": 501,
+      "name": "reserved_501",
+      "value_range": "must be 0",
+      "source_state": "unassigned/reserved",
+      "visibility": "not information",
+      "guance_status": "not applicable",
+      "derivable_from_history": "not applicable",
+      "missing_safe_behavior": "reject non-zero; do not encode unknown here"
+    },
+    {
+      "index": 502,
+      "name": "reserved_502",
+      "value_range": "must be 0",
+      "source_state": "unassigned/reserved",
+      "visibility": "not information",
+      "guance_status": "not applicable",
+      "derivable_from_history": "not applicable",
+      "missing_safe_behavior": "reject non-zero; do not encode unknown here"
+    },
+    {
+      "index": 503,
+      "name": "reserved_503",
+      "value_range": "must be 0",
+      "source_state": "unassigned/reserved",
+      "visibility": "not information",
+      "guance_status": "not applicable",
+      "derivable_from_history": "not applicable",
+      "missing_safe_behavior": "reject non-zero; do not encode unknown here"
+    },
+    {
+      "index": 504,
+      "name": "reserved_504",
+      "value_range": "must be 0",
+      "source_state": "unassigned/reserved",
+      "visibility": "not information",
+      "guance_status": "not applicable",
+      "derivable_from_history": "not applicable",
+      "missing_safe_behavior": "reject non-zero; do not encode unknown here"
+    },
+    {
+      "index": 505,
+      "name": "reserved_505",
+      "value_range": "must be 0",
+      "source_state": "unassigned/reserved",
+      "visibility": "not information",
+      "guance_status": "not applicable",
+      "derivable_from_history": "not applicable",
+      "missing_safe_behavior": "reject non-zero; do not encode unknown here"
+    },
+    {
+      "index": 506,
+      "name": "reserved_506",
+      "value_range": "must be 0",
+      "source_state": "unassigned/reserved",
+      "visibility": "not information",
+      "guance_status": "not applicable",
+      "derivable_from_history": "not applicable",
+      "missing_safe_behavior": "reject non-zero; do not encode unknown here"
+    },
+    {
+      "index": 507,
+      "name": "reserved_507",
+      "value_range": "must be 0",
+      "source_state": "unassigned/reserved",
+      "visibility": "not information",
+      "guance_status": "not applicable",
+      "derivable_from_history": "not applicable",
+      "missing_safe_behavior": "reject non-zero; do not encode unknown here"
+    },
+    {
+      "index": 508,
+      "name": "reserved_508",
+      "value_range": "must be 0",
+      "source_state": "unassigned/reserved",
+      "visibility": "not information",
+      "guance_status": "not applicable",
+      "derivable_from_history": "not applicable",
+      "missing_safe_behavior": "reject non-zero; do not encode unknown here"
+    },
+    {
+      "index": 509,
+      "name": "reserved_509",
+      "value_range": "must be 0",
+      "source_state": "unassigned/reserved",
+      "visibility": "not information",
+      "guance_status": "not applicable",
+      "derivable_from_history": "not applicable",
+      "missing_safe_behavior": "reject non-zero; do not encode unknown here"
+    },
+    {
+      "index": 510,
+      "name": "reserved_510",
+      "value_range": "must be 0",
+      "source_state": "unassigned/reserved",
+      "visibility": "not information",
+      "guance_status": "not applicable",
+      "derivable_from_history": "not applicable",
+      "missing_safe_behavior": "reject non-zero; do not encode unknown here"
+    },
+    {
+      "index": 511,
+      "name": "encoding_bias_sentinel",
+      "value_range": "constant 1",
+      "source_state": "V2 encoder constant",
+      "visibility": "protocol constant",
+      "guance_status": "derivable",
+      "derivable_from_history": "yes",
+      "missing_safe_behavior": "unsupported"
+    }
+  ]
+}

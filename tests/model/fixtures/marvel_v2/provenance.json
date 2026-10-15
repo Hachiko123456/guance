@@ -1,0 +1,20 @@
+{
+  "schema": "guance-gmv2-phase3-fixture-provenance-v1",
+  "copied_from": "D:/project/guandan/runs/M09_full_training/remote/ippo_pilot_failed_20261011/guance_integration_handoff",
+  "purpose": "test-only oracle; production code must not read this directory or the upstream project",
+  "files": {
+    "guance_guandan_card_mapping.json": {
+      "sha256": "c9284060e526f210045fe60119d50aa8456f7638afe8b0c55dddfd7c32d047f0",
+      "bytes": 38112
+    },
+    "guandan_marvel_action_row_v2.json": {
+      "sha256": "6a1f8254879a019cf80ace9bd84488164bfb0bd06ee7ea7ae7586f4264f8507c",
+      "bytes": 3368
+    },
+    "guandan_marvel_channels_v2.json": {
+      "sha256": "b48470da853468c7588696356d740f2b135229ffc6639cd237b1c08dabca013e",
+      "bytes": 183454
+    }
+  },
+  "checkpoint_read": false
+}

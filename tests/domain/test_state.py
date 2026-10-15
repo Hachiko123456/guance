@@ -39,16 +39,16 @@ def test_state_advances_only_on_confirmed_actions() -> None:
     assert state.my_seat == 2
 
 
-def test_start_rejects_conflicting_deal_first_seat_hint() -> None:
+def test_unresolved_deal_seat_hint_does_not_override_observed_start() -> None:
     hand = tuple(full_deck()[:27])
-    state = GameState("hint-conflict")
+    state = GameState("hint-unresolved")
     state.apply_deal(DealEvent(
         my_seat=-1, level=5, hand=hand,
         first_seat_hint=1, first_seat_hint_present=True,
     ))
 
-    with pytest.raises(StateError, match="first-seat hints conflict"):
-        state.apply_start(StartEvent(first_seat=2))
+    state.apply_start(StartEvent(first_seat=2))
+    assert state.first_seat == 2
 
 
 def test_own_seat_candidate_confirms_before_start_without_observation() -> None:

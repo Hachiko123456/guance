@@ -1,0 +1,582 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "record_type",
+    "schema_version",
+    "action_schema_version",
+    "card_encoding",
+    "record_id",
+    "provenance",
+    "pre_state",
+    "observed_action",
+    "post_state",
+    "status",
+    "quality",
+    "outcome",
+    "reward",
+    "privacy_scope",
+    "legal_actions",
+    "legal_actions_status"
+  ],
+  "properties": {
+    "record_type": {
+      "const": "decision"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "action_schema_version": {
+      "const": 1
+    },
+    "card_encoding": {
+      "const": "guance-physical-v1"
+    },
+    "record_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "provenance": {
+      "$ref": "#/$defs/provenance"
+    },
+    "pre_state": {
+      "$ref": "#/$defs/state"
+    },
+    "observed_action": {
+      "$ref": "#/$defs/observed_action"
+    },
+    "post_state": {
+      "$ref": "#/$defs/state"
+    },
+    "status": {
+      "enum": [
+        "accepted_candidate",
+        "partial",
+        "quarantine"
+      ]
+    },
+    "quality": {
+      "$ref": "#/$defs/quality"
+    },
+    "outcome": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/outcome"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "reward": {
+      "type": "null"
+    },
+    "privacy_scope": {
+      "const": "own_hand_and_public_actions_only"
+    },
+    "legal_actions": {
+      "type": "null"
+    },
+    "legal_actions_status": {
+      "const": "not_recorded_regenerate_from_rules"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Guance training decision record v1",
+  "description": "Structural shape only. Use validate_decision for physical card, temporal/action and cross-field invariants. Does not prove rules/model legality.",
+  "$defs": {
+    "public_action": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "index",
+        "player",
+        "kind",
+        "cards",
+        "combo_type",
+        "next_player",
+        "trick"
+      ],
+      "properties": {
+        "index": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4096
+        },
+        "player": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3
+        },
+        "kind": {
+          "enum": [
+            "play",
+            "pass"
+          ]
+        },
+        "cards": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 333
+          },
+          "minItems": 0,
+          "maxItems": 27,
+          "uniqueItems": true
+        },
+        "combo_type": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 2147483647
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "next_player": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 3
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "trick": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4096
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "pass"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "cards": {
+                "maxItems": 0
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "cards": {
+                "minItems": 1
+              }
+            }
+          }
+        }
+      ]
+    },
+    "state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "session_id",
+        "game_id",
+        "state_version",
+        "captured_at",
+        "phase",
+        "level",
+        "my_seat",
+        "first_seat",
+        "current_seat",
+        "hand",
+        "remaining",
+        "history",
+        "free_lead",
+        "trick",
+        "seat_confirmed",
+        "seat_confirmation_source"
+      ],
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "pattern": "^[A-Za-z0-9_.:-]+$"
+        },
+        "game_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "pattern": "^[A-Za-z0-9_.:-]+$"
+        },
+        "state_version": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        "captured_at": {
+          "type": "number",
+          "minimum": 0
+        },
+        "phase": {
+          "enum": [
+            "waiting_deal",
+            "waiting_start",
+            "active",
+            "ended",
+            "settled"
+          ]
+        },
+        "level": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 13
+        },
+        "my_seat": {
+          "type": "integer",
+          "minimum": -1,
+          "maximum": 3
+        },
+        "first_seat": {
+          "type": "integer",
+          "minimum": -1,
+          "maximum": 3
+        },
+        "current_seat": {
+          "type": "integer",
+          "minimum": -1,
+          "maximum": 3
+        },
+        "hand": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 333
+          },
+          "minItems": 0,
+          "maxItems": 27,
+          "uniqueItems": true
+        },
+        "remaining": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 27
+          },
+          "minItems": 4,
+          "maxItems": 4
+        },
+        "history": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/public_action"
+          },
+          "minItems": 0,
+          "maxItems": 4096
+        },
+        "free_lead": {
+          "type": "boolean"
+        },
+        "trick": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4096
+        },
+        "seat_confirmed": {
+          "type": "boolean"
+        },
+        "seat_confirmation_source": {
+          "anyOf": [
+            {
+              "enum": [
+                "manual",
+                "inferred",
+                "3019"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "finish_ranks_by_seat": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": -1,
+            "maximum": 4
+          },
+          "minItems": 4,
+          "maxItems": 4
+        },
+        "lead_action": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/public_action"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "quality": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "reasons",
+        "lost"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "accepted_candidate",
+            "partial",
+            "quarantine"
+          ]
+        },
+        "reasons": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "minItems": 0,
+          "maxItems": 64
+        },
+        "lost": {
+          "type": "boolean"
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "source_id",
+        "episode_id",
+        "session_id",
+        "game_id",
+        "source_sequence",
+        "captured_at",
+        "rule_profile",
+        "rule_revision"
+      ],
+      "properties": {
+        "source": {
+          "enum": [
+            "real",
+            "legacy",
+            "synthetic"
+          ]
+        },
+        "source_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "pattern": "^[A-Za-z0-9_.:-]+$"
+        },
+        "episode_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "session_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "pattern": "^[A-Za-z0-9_.:-]+$"
+        },
+        "game_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "pattern": "^[A-Za-z0-9_.:-]+$"
+        },
+        "source_sequence": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9223372036854775807
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "captured_at": {
+          "type": "number",
+          "minimum": 0
+        },
+        "rule_profile": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160,
+              "pattern": "^[A-Za-z0-9_.:-]+$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "rule_revision": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160,
+              "pattern": "^[A-Za-z0-9_.:-]+$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "observed_action": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "index",
+        "player",
+        "kind",
+        "cards",
+        "combo_type",
+        "next_player",
+        "trick",
+        "signature",
+        "event_index"
+      ],
+      "properties": {
+        "index": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4096
+        },
+        "player": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3
+        },
+        "kind": {
+          "enum": [
+            "play",
+            "pass"
+          ]
+        },
+        "cards": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 333
+          },
+          "minItems": 0,
+          "maxItems": 27,
+          "uniqueItems": true
+        },
+        "combo_type": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 2147483647
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "next_player": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 3
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "trick": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4096
+        },
+        "signature": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "event_index": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4096
+        }
+      }
+    },
+    "outcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "phase",
+        "finish_ranks_by_seat"
+      ],
+      "properties": {
+        "phase": {
+          "const": "settled"
+        },
+        "finish_ranks_by_seat": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 4
+          },
+          "minItems": 4,
+          "maxItems": 4,
+          "uniqueItems": true
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "accepted_candidate"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "outcome": {
+            "$ref": "#/$defs/outcome"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "outcome": {
+            "type": "null"
+          }
+        }
+      }
+    }
+  ]
+}

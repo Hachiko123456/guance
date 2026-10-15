@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import QtQuick.Window
+import Guance.Presentation 1.0
 import "."
 
 ApplicationWindow {
@@ -133,7 +134,7 @@ ApplicationWindow {
         function onScreenWorkAreaChanged() { floatingWindow.requestFit(false) }
     }
 
-    Window {
+    FloatingWindow {
         id: floatingWindow
         objectName: "floatingAdviceWindow"
         visible: false
@@ -146,12 +147,18 @@ ApplicationWindow {
         color: "transparent"
         transientParent: null
         property string dockMode: "right"
-        property string sizeMode: "fit"
         property bool applyingGeometry: false
         property bool restoringLayout: false
         property bool savingLayout: false
         property bool layoutDirty: false
         property bool allowFitShrink: false
+        // Native window changes can arrive one event after a QML assignment.
+        // Remember the last programmatic geometry so those events cannot turn
+        // fit mode into manual mode; a real user resize still differs.
+        property int lastProgrammaticWidth: -1
+        property int lastProgrammaticHeight: -1
+        property int lastProgrammaticX: -2147483648
+        property int lastProgrammaticY: -2147483648
         readonly property int contentFitHeight: Math.ceil(floatingContent.implicitHeight + floatingHeader.height + (floatingCounter.visible ? floatingCounter.implicitHeight + 8 : 0) + 32)
 
         Timer {
@@ -176,8 +183,15 @@ ApplicationWindow {
             return {x: Number(area.x || 0), y: Number(area.y || 0), width: Number(area.width), height: Number(area.height)}
         }
 
+        function recordProgrammaticGeometry() {
+            lastProgrammaticWidth = Math.round(width)
+            lastProgrammaticHeight = Math.round(height)
+            lastProgrammaticX = Math.round(x)
+            lastProgrammaticY = Math.round(y)
+        }
+
         function layoutSnapshot() {
-            return {saved: true, mode: dockMode, sizeMode: sizeMode, x: Math.round(x), y: Math.round(y), width: Math.round(width), height: Math.round(height)}
+            return {saved: true, mode: dockMode, sizeMode: sizeMode, x: Math.round(x), y: Math.round(y), width: Math.round(nativeWidth), height: Math.round(nativeHeight)}
         }
 
         function scheduleLayoutSave() {
@@ -221,6 +235,7 @@ ApplicationWindow {
                 clampToWorkArea()
             }
             allowFitShrink = false
+            recordProgrammaticGeometry()
             scheduleLayoutSave()
         }
 
@@ -240,6 +255,7 @@ ApplicationWindow {
             applyingGeometry = false
             clampToWorkArea()
             restoringLayout = false
+            recordProgrammaticGeometry()
             requestFit(!layout.saved)
         }
 
@@ -275,6 +291,7 @@ ApplicationWindow {
             positionDock(workArea())
             applyingGeometry = false
             clampToWorkArea()
+            recordProgrammaticGeometry()
             if (save !== false) scheduleLayoutSave()
         }
 
@@ -289,19 +306,25 @@ ApplicationWindow {
             width = 560
             applyingGeometry = false
             clampToWorkArea()
+            recordProgrammaticGeometry()
             requestFit(true)
         }
 
         function manualResize() {
             if (applyingGeometry || restoringLayout || !visible) return
+            if (Math.round(width) === lastProgrammaticWidth &&
+                    Math.round(height) === lastProgrammaticHeight) return
             sizeMode = "manual"
             allowFitShrink = false
             clampToWorkArea()
+            recordProgrammaticGeometry()
             scheduleLayoutSave()
         }
 
         function moved() {
             if (applyingGeometry || restoringLayout || !visible) return
+            if (Math.round(x) === lastProgrammaticX &&
+                    Math.round(y) === lastProgrammaticY) return
             dockMode = "free"
             scheduleLayoutSave()
             requestFit(false)
@@ -314,10 +337,7 @@ ApplicationWindow {
         onScreenChanged: requestFit(false)
         onContentFitHeightChanged: requestFit(false)
         Component.onCompleted: applySavedLayout(viewModel.floatingLayout)
-        onClosing: function(close) {
-            close.accepted = false
-            window.closeFloatingWindow()
-        }
+        onCloseRequested: window.closeFloatingWindow()
 
         Rectangle {
             anchors.fill: parent

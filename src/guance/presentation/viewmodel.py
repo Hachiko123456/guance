@@ -79,6 +79,14 @@ class GuanceViewModel(QObject):
         self._certificate_fingerprint = ""
         self._model_state = "pending"
         self._model_summary = "尚未加载模型"
+        self._model_metadata: dict[str, Any] = {
+            "status": "pending", "provider": "", "backend": "", "runtime": "",
+            "runtime_version": "", "model_version": "", "capabilities": {},
+            "fingerprint": "", "bundle_fingerprint": "", "deployment_fingerprint": "",
+            "score_kind": "", "classification": "", "formal_evaluation_status": "",
+            "champion_status": "", "experimental": False, "production_ready": False,
+            "strength_claim": False, "public_self_supported": False,
+        }
         self._running = False
         self._connected = False
         self._busy = False
@@ -130,6 +138,7 @@ class GuanceViewModel(QObject):
     certificateFingerprint = Property(str, lambda s: s._certificate_fingerprint, notify=statusChanged)
     modelState = Property(str, lambda s: s._model_state, notify=statusChanged)
     modelSummary = Property(str, lambda s: s._model_summary, notify=statusChanged)
+    modelMetadata = Property(dict, lambda s: deepcopy(s._model_metadata), notify=statusChanged)
     connected = Property(bool, lambda s: s._connected, notify=statusChanged)
     running = Property(bool, lambda s: s._running, notify=statusChanged)
     busy = Property(bool, lambda s: s._busy, notify=statusChanged)
@@ -299,6 +308,7 @@ class GuanceViewModel(QObject):
         if mode not in {"right", "left", "top", "bottom", "free"}:
             mode = "right"
         saved = bool(value.get("saved", False))
+        has_size_mode = "sizeMode" in value
         size_mode = str(value.get("sizeMode", "manual" if saved else "fit"))
         if size_mode not in {"fit", "manual"}:
             size_mode = "manual" if saved else "fit"
@@ -307,10 +317,16 @@ class GuanceViewModel(QObject):
                 return int(value.get(key, default))
             except (TypeError, ValueError, OverflowError):
                 return default
-        return {"saved": saved, "mode": mode, "sizeMode": size_mode,
-                "x": number("x", 0), "y": number("y", 0),
-                "width": max(1, number("width", 560)),
-                "height": max(1, number("height", 760))}
+        normalized = {"saved": saved, "mode": mode,
+                      "x": number("x", 0), "y": number("y", 0),
+                      "width": max(1, number("width", 560)),
+                      "height": max(1, number("height", 760))}
+        # Legacy preferences predate sizeMode. Preserve their exact shape on
+        # the persistence path; QML already treats a saved layout without this
+        # optional field as manual. New snapshots carry the explicit mode.
+        if has_size_mode or not saved:
+            normalized["sizeMode"] = size_mode
+        return normalized
 
     @Slot(dict)
     def restore_floating_layout(self, value: dict[str, Any]) -> None:
@@ -350,6 +366,13 @@ class GuanceViewModel(QObject):
         self._logs = []
         self.logsChanged.emit()
 
+    def set_model_selection_generation(self, generation: int) -> None:
+        """Revoke already-queued model records before the next UI-thread delivery."""
+        current = getattr(self, '_model_selection_generation', 0)
+        if generation > current:
+            self._model_selection_generation = generation
+            self._model_ui_sequence = 0
+
     def _dispatch(self, name: str, record: dict[str, Any]) -> None:
         value = deepcopy(record)
         if QThread.currentThread() == self.thread():
@@ -373,11 +396,26 @@ class GuanceViewModel(QObject):
     def append_log(self, data: dict[str, Any]) -> None:
         self._dispatch("log", data)
 
-    def clear_advice(self, reason: str = "") -> None:
-        self._dispatch("clear", {"reason": reason})
+    def clear_advice(self, reason: str = '', *, generation: int | None = None,
+                     sequence: int | None = None) -> None:
+        record = {'reason': reason}
+        if generation is not None:
+            record['_model_selection_generation'] = generation
+        if sequence is not None:
+            record['_model_ui_sequence'] = sequence
+        self._dispatch('clear', record)
 
     @Slot(str, object)
     def _receive(self, name: str, data: dict[str, Any]) -> None:
+        generation = data.get('_model_selection_generation')
+        if generation is not None:
+            if generation != getattr(self, '_model_selection_generation', 0):
+                return
+            sequence = data.get('_model_ui_sequence')
+            if type(sequence) is int:
+                if sequence <= getattr(self, '_model_ui_sequence', 0):
+                    return
+                self._model_ui_sequence = sequence
         {"status": self._status, "observation": self._observe, "table": self._table_state,
          "advice": self._advise, "log": self._log, "clear": self._clear}[name](data)
 
@@ -608,6 +646,47 @@ class GuanceViewModel(QObject):
             return "绝对座位：座位 0 → 座位 1 → 座位 2 → 座位 3（待确认）"
         return ""
 
+    @staticmethod
+    def _project_model_metadata(value: Any, status: str) -> dict[str, Any]:
+        """Expose only bounded, provider-neutral metadata to QML."""
+        source = value if isinstance(value, Mapping) else {}
+
+        def text(key: str, *aliases: str, limit: int = 200) -> str:
+            raw = source.get(key)
+            if raw in (None, ""):
+                for alias in aliases:
+                    raw = source.get(alias)
+                    if raw not in (None, ""):
+                        break
+            return safe_text(raw, limit).strip()
+
+        raw_capabilities = source.get("capabilities", {})
+        capabilities: dict[str, bool] = {}
+        if isinstance(raw_capabilities, Mapping):
+            for key, enabled in raw_capabilities.items():
+                if isinstance(key, str) and key and type(enabled) is bool and len(key) <= 64:
+                    capabilities[key] = enabled
+        result = {
+            "status": text("status", limit=32) or safe_text(status, 32),
+            "provider": text("provider"), "backend": text("backend"),
+            "runtime": text("runtime"), "model_version": text("model_version"),
+            "capabilities": capabilities,
+            "fingerprint": text("fingerprint", "model_sha256", limit=128),
+        }
+        for key, limit in (
+            ("runtime_version", 80), ("bundle_fingerprint", 128),
+            ("deployment_fingerprint", 128), ("score_kind", 80),
+            ("classification", 80), ("formal_evaluation_status", 80),
+            ("champion_status", 80),
+        ):
+            value = text(key, limit=limit)
+            if value:
+                result[key] = value
+        for key in ("experimental", "production_ready", "strength_claim", "public_self_supported"):
+            if type(source.get(key)) is bool:
+                result[key] = source[key]
+        return result
+
     def _status(self, data: dict[str, Any]) -> None:
         self._demo = bool(data.get("demo", self._demo))
         raw_phase = str(data.get("phase", data.get("status", self._phase))).strip().lower()
@@ -652,6 +731,15 @@ class GuanceViewModel(QObject):
         for field in ("network_mode", "model_state", "model_summary"):
             if field in data:
                 setattr(self, f"_{field}", safe_text(data[field]))
+        if "model_metadata" in data:
+            metadata_status = safe_text(data.get("model_state", self._model_state), 32)
+            self._model_metadata = self._project_model_metadata(
+                data.get("model_metadata"), metadata_status
+            )
+        elif "model_state" in data:
+            self._model_metadata = {
+                **self._model_metadata, "status": safe_text(data["model_state"], 32)
+            }
         if "certificate_state" in data:
             self._certificate_state = safe_text(data["certificate_state"]).strip().lower()
         if "certificate_fingerprint" in data:
@@ -913,17 +1001,51 @@ class GuanceViewModel(QObject):
             kind_key = "pass" if is_pass else str(raw_kind)
             cards = [display_card(x, self.level) for x in item.get("cards", [])]
             kind = kind_name(kind_key)
-            # FableDan's claim values are ranks (for example, [5, 7]), not
-            # encoded cards. Formatting them as cards invents a suit and can
-            # display a false recommendation, so keep them as rank labels.
-            claims = [self._display_rank(x) for x in item.get("claim", [])]
+            claims = self._display_claims(item, data)
+            score = item.get("score")
+            if type(score) not in (int, float):
+                score = None
+            score_kind = safe_text(item.get("score_kind", data.get("score_kind", "")), 80)
+            score_label = ("策略/路径分数（非胜率）"
+                           if any(token in score_kind.lower() for token in ("policy", "path", "marvel"))
+                           else "模型分数")
             candidates.append({"cards": cards, "kind": kind, "pass": is_pass,
-                               "claim": claims})
+                               "claim": claims, "score": score, "scoreKind": score_kind,
+                               "scoreLabel": score_label})
         self._candidates = candidates
         self._advice_state = "ready" if candidates else "empty"
         self._advice_message = "仅作建议，请在游戏内确认出牌。"
         self._elapsed_ms = float(data.get("elapsed_ms", 0))
         self.adviceChanged.emit()
+
+    @classmethod
+    def _display_claims(cls, item: Mapping[str, Any], advice: Mapping[str, Any]) -> list[str]:
+        """Format claims only for explicit legacy/FableDan rank semantics."""
+        claims = item.get("claim", [])
+        if not isinstance(claims, (list, tuple)):
+            return []
+        claim_kind = safe_text(item.get("claim_kind", ""), 64).strip().lower()
+        provider = safe_text(advice.get("provider", ""), 64).strip().lower()
+        model_version = safe_text(advice.get("model_version", ""), 64).strip().lower()
+        metadata = advice.get("metadata")
+        legacy_metadata = isinstance(metadata, Mapping) and bool(metadata.get("legacy"))
+        if claim_kind == "fabledan_rank_index":
+            return [cls._format_fabledan_rank_index(value) for value in claims]
+        explicit_legacy = (
+            not provider
+            or (provider in {"fabledan", "builtin.fabledan"}
+                and (model_version in {"", "legacy"} or legacy_metadata))
+        )
+        if explicit_legacy:
+            return [cls._display_rank(value) for value in claims]
+        # Unknown provider claims are opaque annotations, not ranks, cards, or
+        # probabilities. Keep a bounded textual representation without decoding.
+        return [safe_text(value, 24) for value in claims]
+
+    @classmethod
+    def _format_fabledan_rank_index(cls, value: Any) -> str:
+        """Explicit compatibility formatter for the canonical FableDan claim kind."""
+        return cls._display_rank(value)
 
     @staticmethod
     def _display_rank(value: Any) -> str:

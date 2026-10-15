@@ -1,0 +1,57 @@
+[
+  {
+    "fixture_id": "local-20260929-162605",
+    "capture_id": "20260929-162605",
+    "relative_path": "debug/captures/20260929-162605/frames.jsonl",
+    "source_sha256": "b497b4b426a2a070ad55d7c519b18d2832c335d20784c97bfe7a6d6bb9c9b92b",
+    "expected_level": 7,
+    "expected_observer_seat": 3,
+    "expected_decision_count": 20,
+    "expected_quality": "accepted_candidate;settled;closed-unverified",
+    "status": "accepted_candidate"
+  },
+  {
+    "fixture_id": "local-20260929-173126",
+    "capture_id": "20260929-173126",
+    "relative_path": "debug/captures/20260929-173126/frames.jsonl",
+    "source_sha256": "7c001006fd115e0a3e3bc89328e3e8b2073348afd88a8ac8be7223ae1e72aff7",
+    "expected_level": 6,
+    "expected_observer_seat": 0,
+    "expected_decision_count": 21,
+    "expected_quality": "accepted_candidate;settled;closed-unverified",
+    "status": "accepted_candidate"
+  },
+  {
+    "fixture_id": "local-20260929-232820",
+    "capture_id": "20260929-232820",
+    "relative_path": "debug/captures/20260929-232820/frames.jsonl",
+    "source_sha256": "729f1b7f4724e150cbc631dbed380514fbcb088222a0cb3ab7bc9d830348d78f",
+    "expected_level": 4,
+    "expected_observer_seat": 2,
+    "expected_decision_count": 17,
+    "expected_quality": "accepted_candidate;settled;closed-unverified",
+    "status": "accepted_candidate"
+  },
+  {
+    "fixture_id": "local-20260930-012733",
+    "capture_id": "20260930-012733",
+    "relative_path": "debug/captures/20260930-012733/frames.jsonl",
+    "source_sha256": "cce2715b2eaf832014dfcd061df8482eba706d8f0e4c876bf75f1272155fe703",
+    "expected_level": 8,
+    "expected_observer_seat": 2,
+    "expected_decision_count": 21,
+    "expected_quality": "accepted_candidate;settled;closed",
+    "status": "accepted_candidate"
+  },
+  {
+    "fixture_id": "local-20260930-171722",
+    "capture_id": "20260930-171722",
+    "relative_path": "debug/captures/20260930-171722/frames.jsonl",
+    "source_sha256": "706a0331e74ca5bcca251c80b5c0502d6a2f10d72211d06d0eeb0bd750498302",
+    "expected_level": 7,
+    "expected_observer_seat": 1,
+    "expected_decision_count": 24,
+    "expected_quality": "accepted_candidate;settled;closed",
+    "status": "accepted_candidate"
+  }
+]

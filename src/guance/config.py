@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 from pathlib import Path
 import sys
 from typing import Any
@@ -30,18 +31,26 @@ def ensure_app_paths(paths: dict[str, Path]) -> None:
         paths[name].mkdir(parents=True,exist_ok=True)
 
 
-def default_model_path(paths: dict[str, Path]) -> Path:
-    override=os.environ.get('GUANCE_MODEL_PATH')
+def default_model_source(paths: dict[str, Path], preferences: dict[str, Any] | None = None) -> Path:
+    """Select an explicit source first; never fall back after a selected source fails."""
+    override = os.environ.get("GUANCE_MODEL_BUNDLE") or os.environ.get("GUANCE_MODEL_PATH")
     if override:
         return Path(override)
-    local=paths['models_dir']/'best.npz'
-    if local.is_file():
-        return local
-    return paths['root_dir']/'data'/'profiles'/'tencent_daguandan'/'models'/'best.npz'
+    selected = (preferences or {}).get("model_path")
+    if isinstance(selected, str) and selected.strip():
+        return Path(selected)
+    from guance.infrastructure.model.defaults import initial_model_source
+    return initial_model_source(paths)
+
+
+def default_model_path(paths: dict[str, Path]) -> Path:
+    """Compatibility alias. New composition uses a model source, not a weight format."""
+    return default_model_source(paths)
 
 
 def load_preferences(paths: dict[str, Path]) -> dict[str, Any]:
-    defaults={'theme':'system','floating':False,'floating_layout':{},'model_path':'','inference_threads':2,
+    defaults={'theme':'system','floating':False,'floating_layout':{},'model_path':'',
+              'model_selection_failed':False,'requested_model_path':'','inference_threads':2,
               'advice_timeout_ms':2000,'top_n':3,'debug_capture_enabled':True}
     p=paths['config_dir']/'preferences.json'
     try:
@@ -53,8 +62,23 @@ def load_preferences(paths: dict[str, Path]) -> dict[str, Any]:
     return defaults
 
 
-def save_preferences(paths: dict[str, Path], preferences: dict[str,Any]) -> None:
-    paths['config_dir'].mkdir(parents=True,exist_ok=True)
-    p=paths['config_dir']/'preferences.json';tmp=p.with_suffix('.tmp')
-    tmp.write_text(json.dumps(preferences,ensure_ascii=False,indent=2),encoding='utf8')
-    tmp.replace(p)
+def save_preferences(paths: dict[str, Path], preferences: dict[str, Any]) -> None:
+    """Replace only a complete JSON document; never touch another writer's temp."""
+    text = json.dumps(preferences, ensure_ascii=False, indent=2)
+    directory = paths['config_dir']
+    directory.mkdir(parents=True, exist_ok=True)
+    owned: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=directory,
+                                         prefix='.preferences-', suffix='.tmp', delete=False) as stream:
+            owned = Path(stream.name)
+            stream.write(text)
+            stream.flush()
+        owned.replace(directory / 'preferences.json')
+    finally:
+        if owned is not None:
+            try:
+                owned.unlink(missing_ok=True)
+            except OSError:
+                # Do not hide the persistence failure or delete any other file.
+                pass

@@ -404,8 +404,116 @@ def test_saved_layout_preserves_size_mode_and_migrates_legacy(qapp: QApplication
     assert vm.floatingLayout["sizeMode"] == "fit"
     legacy = {"saved": True, "mode": "free", "x": -900, "y": 30, "width": 520, "height": 430}
     vm.restore_floating_layout(legacy)
-    assert vm.floatingLayout == {**legacy, "sizeMode": "manual"}
+    assert vm.floatingLayout == legacy
     emitted = []
     vm.floatingLayoutSaveRequested.connect(emitted.append)
     vm.save_floating_layout({**legacy, "sizeMode": "fit"})
     assert emitted == [{**legacy, "sizeMode": "fit"}]
+
+
+def test_model_metadata_projection_is_bounded_and_tracks_unavailable_state(qapp: QApplication) -> None:
+    vm = GuanceViewModel()
+    vm.apply_status({
+        "model_state": "ready",
+        "model_metadata": {
+            "status": "loaded", "provider": "fabledan", "backend": "numpy",
+            "runtime": "python", "model_version": "v7",
+            "model_sha256": "abc123",
+            "capabilities": {"recommend": True, "top_n": False},
+            "private_detail": "must not cross presentation boundary",
+        },
+    })
+    assert vm.modelMetadata == {
+        "status": "loaded", "provider": "fabledan", "backend": "numpy",
+        "runtime": "python", "model_version": "v7",
+        "capabilities": {"recommend": True, "top_n": False},
+        "fingerprint": "abc123",
+    }
+
+    vm.apply_status({"model_state": "unavailable", "model_metadata": {}})
+    assert vm.modelState == "unavailable"
+    assert vm.modelMetadata["status"] == "unavailable"
+    assert vm.modelMetadata["provider"] == ""
+
+
+def test_claim_display_requires_explicit_semantics_for_canonical_providers(qapp: QApplication) -> None:
+    vm = GuanceViewModel()
+    vm.apply_observation({
+        "session_id": "s", "game_id": "claims", "state_version": 1,
+        "level": 5, "my_seat": 0, "current_seat": 0, "hand": [0x15],
+        "remaining": [1, 2, 3, 4],
+    })
+    base = {"session_id": "s", "game_id": "claims", "state_version": 1,
+            "status": "ready"}
+
+    vm.apply_advice({**base, "provider": "other", "model_version": "v1",
+                     "candidates": [{"kind": "single", "cards": [0x15],
+                                     "claim": [11, 14], "claim_kind": "opaque"}]})
+    assert vm.adviceCandidates[0]["claim"] == ["11", "14"]
+
+    vm.apply_advice({**base, "provider": "fabledan", "model_version": "v2",
+                     "candidates": [{"kind": "single", "cards": [0x15],
+                                     "claim": [11, 14],
+                                     "claim_kind": "fabledan_rank_index"}]})
+    assert vm.adviceCandidates[0]["claim"] == ["J", "小王"]
+
+
+def test_phase6_experimental_metadata_is_honest_and_bounded(qapp: QApplication) -> None:
+    vm = GuanceViewModel()
+    vm.apply_status({
+        "model_state": "unavailable",
+        "model_metadata": {
+            "status": "unavailable", "provider": "guandan_marvel_v2",
+            "backend": "guandan", "runtime": "torch-cpu",
+            "runtime_version": "2.13.0+cpu",
+            "model_version": "MARVEL-V2-v1.3-iter000100",
+            "model_sha256": "4" * 64, "bundle_fingerprint": "1" * 64,
+            "deployment_fingerprint": "3" * 64,
+            "score_kind": "marvel_v2_policy_path_score",
+            "classification": "evaluation_only",
+            "formal_evaluation_status": "not_run",
+            "champion_status": "not_established",
+            "experimental": True, "production_ready": False,
+            "strength_claim": False, "public_self_supported": False,
+            "capabilities": {"next_token_policy": True, "recommend": False},
+            "native_path": r"D:\private\native.pyd",
+            "source_root": r"D:\private\guandan",
+        },
+    })
+    assert vm.modelState == "unavailable"
+    assert vm.modelMetadata == {
+        "status": "unavailable", "provider": "guandan_marvel_v2",
+        "backend": "guandan", "runtime": "torch-cpu",
+        "runtime_version": "2.13.0+cpu",
+        "model_version": "MARVEL-V2-v1.3-iter000100",
+        "capabilities": {"next_token_policy": True, "recommend": False},
+        "fingerprint": "4" * 64, "bundle_fingerprint": "1" * 64,
+        "deployment_fingerprint": "3" * 64,
+        "score_kind": "marvel_v2_policy_path_score",
+        "classification": "evaluation_only",
+        "formal_evaluation_status": "not_run",
+        "champion_status": "not_established",
+        "experimental": True, "production_ready": False,
+        "strength_claim": False, "public_self_supported": False,
+    }
+    assert "native_path" not in vm.modelMetadata and "source_root" not in vm.modelMetadata
+
+
+def test_phase6_candidate_score_is_labelled_non_win_rate(qapp: QApplication) -> None:
+    vm = GuanceViewModel()
+    vm.apply_observation({
+        "session_id": "s", "game_id": "score", "state_version": 1,
+        "level": 5, "my_seat": 0, "current_seat": 0, "hand": [0x15],
+        "remaining": [1, 2, 3, 4],
+    })
+    vm.apply_advice({
+        "session_id": "s", "game_id": "score", "state_version": 1,
+        "status": "ready", "provider": "guandan_marvel_v2",
+        "model_version": "experimental", "score_kind": "marvel_v2_policy_path_score",
+        "candidates": [{"kind": "single", "cards": [0x15], "claim": [],
+                        "score": 0.75, "score_kind": "marvel_v2_policy_path_score"}],
+    })
+    candidate = vm.adviceCandidates[0]
+    assert candidate["score"] == 0.75
+    assert candidate["scoreKind"] == "marvel_v2_policy_path_score"
+    assert candidate["scoreLabel"] == "策略/路径分数（非胜率）"

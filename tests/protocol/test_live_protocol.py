@@ -3,6 +3,8 @@ from __future__ import annotations
 import math
 import struct
 
+import pytest
+
 
 def varint(value: int) -> bytes:
     out = bytearray()
@@ -51,21 +53,33 @@ def aggregate(records: list[bytes]) -> bytes:
 
 def test_live_parser_reads_deal_and_start() -> None:
     from guance.infrastructure.protocol.live import parse_aggregate
-    # Card codes: H2, S3, C4, D5 plus filler to satisfy the observed 27-card contract.
-    hand = [((2 << 4) | 2), ((1 << 4) | 3), ((3 << 4) | 4), ((4 << 4) | 5)]
-    hand.extend(((1 << 4) | (6 + i)) for i in range(23))
+    from guance.public_state_contract import guandan_card_id_to_wire
+    hand = [guandan_card_id_to_wire(card_id) for card_id in range(27)]
     packed = b"".join(varint(x) for x in hand)
     # The 3001 hint intentionally differs from 3004 to prove it is not
     # treated as the observer seat.
     deal = field(1, 0, 27) + field(2, 2, packed) + field(3, 0, 1) + field(4, 0, 5)
-    start = field(1, 0, 2)
+    start = field(1, 0, 2) + field(2, 0, 20) + field(3, 0, 2) + field(4, 0, 35)
     raw = aggregate([record(3001, 2, deal), record(3004, 5, start)])
     events = parse_aggregate(raw)
     assert events[0].level == 5
     assert events[0].my_seat == -1
-    assert events[0].hand[0] == ((2 << 4) | 2)
-    assert events[0].first_seat_hint == 1
+    assert events[0].hand[0] == guandan_card_id_to_wire(0)
+    assert events[0].first_seat_hint is None
+    assert events[0].first_seat_hint_present is False
     assert events[1].first_seat == 2
+
+
+def test_live_parser_ignores_conflicting_unresolved_3001_hints_under_observed_shape() -> None:
+    from guance.infrastructure.protocol.live import parse_aggregate
+    from guance.public_state_contract import guandan_card_id_to_wire
+
+    hand = b"".join(varint(guandan_card_id_to_wire(card_id)) for card_id in range(27))
+    nested = field(3, 0, 3)
+    body = (field(1, 0, 27) + field(2, 2, hand) + field(3, 0, 2)
+            + field(4, 0, 6) + field(5, 2, b"opaque") + field(6, 2, nested))
+    event = parse_aggregate(aggregate([record(3001, 2, body)]))[0]
+    assert event.first_seat_hint is None and event.first_seat_hint_secondary is None
 
 
 def test_live_parser_extracts_3019_own_hand_candidate_without_confirming_it() -> None:
@@ -86,8 +100,8 @@ def test_live_parser_extracts_3019_own_hand_candidate_without_confirming_it() ->
     assert events[0].referenced_cards == tuple(hand)
 
 
-def test_live_parser_preserves_3019_default_zero_presence() -> None:
-    from guance.domain.events import OwnSeatCandidateEvent
+def test_live_parser_treats_exact_3019_missing_seat_shape_as_informational() -> None:
+    from guance.domain.events import InformationalEvent
     from guance.infrastructure.protocol.live import parse_aggregate
 
     hand = [((1 << 4) | (2 + i)) for i in range(27)]
@@ -95,10 +109,8 @@ def test_live_parser_preserves_3019_default_zero_presence() -> None:
     entry = field(1, 0, len(hand)) + field(2, 2, packed)
     body = field(3, 2, field(2, 2, entry))
     events = parse_aggregate(aggregate([record(3019, 26, body)]))
-
-    assert isinstance(events[0], OwnSeatCandidateEvent)
-    assert events[0].candidate_seat == 0
-    assert events[0].candidate_seat_present is False
+    assert len(events) == 1 and isinstance(events[0], InformationalEvent)
+    assert events[0].command == 3019
 
 
 def test_live_parser_accepts_3007_as_non_authoritative_information() -> None:
@@ -127,9 +139,11 @@ def test_live_parser_preserves_end_auxiliary_settlement_order_in_one_aggregate()
         + field(3, 0, (1 << 64) - 1)
         + field(4, 0, 1)
         + field(1, 0, 2)
-        + field(5, 0, 0)
         + field(6, 0, 1)
         + field(7, 2, varint(17))
+        + field(8, 0, 1)
+        + field(9, 0, 1)
+        + field(11, 2, b"x" * 20)
     )
     empty_hand = field(1, 0, 0)
     settlement = field(3, 2, b"\x02\x04\x01\x03") + b"".join(

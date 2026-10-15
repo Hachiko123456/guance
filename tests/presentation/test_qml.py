@@ -637,3 +637,34 @@ def test_floating_menu_manual_seat_confirmation_is_visible_only_before_confirmat
     app.processEvents()
     assert menu.property("visible") is False
     assert menu.property("enabled") is False
+
+
+def test_phase6_settings_show_experimental_unavailable_metadata_without_win_rate(ui) -> None:
+    app, _engine, root, vm = ui
+    vm.apply_status({
+        "model_state": "unavailable",
+        "model_summary": "guandan_marvel_v2 / experimental / unavailable",
+        "model_metadata": {
+            "status": "unavailable", "provider": "guandan_marvel_v2",
+            "backend": "guandan", "runtime": "torch-cpu",
+            "runtime_version": "2.13.0+cpu",
+            "model_version": "MARVEL-V2-v1.3-iter000100",
+            "model_sha256": "4" * 64, "deployment_fingerprint": "3" * 64,
+            "score_kind": "marvel_v2_policy_path_score",
+            "classification": "evaluation_only",
+            "formal_evaluation_status": "not_run", "champion_status": "not_established",
+            "experimental": True, "production_ready": False,
+            "strength_claim": False, "public_self_supported": False,
+            "capabilities": {"next_token_policy": True},
+        },
+    })
+    vm.navigate("settings")
+    app.processEvents()
+    assert "guandan_marvel_v2" in str(_child(root, "modelProviderField").property("text"))
+    assert "实验性" in str(_child(root, "modelExperimentalField").property("text"))
+    assert "生产就绪：否" in str(_child(root, "modelExperimentalField").property("text"))
+    assert "evaluation_only" in str(_child(root, "modelExperimentalField").property("text"))
+    score = str(_child(root, "modelScoreField").property("text"))
+    assert "非胜率" in score and "胜率：" not in score
+    assert "not_run" in str(_child(root, "modelEvaluationField").property("text"))
+    assert "3" * 12 in str(_child(root, "modelDeploymentFingerprintField").property("text"))

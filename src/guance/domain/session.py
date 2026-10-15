@@ -1,14 +1,40 @@
 """Application-facing deterministic session aggregate."""
 from __future__ import annotations
 
-from dataclasses import asdict
-from typing import Any
+from collections.abc import Callable, Iterable
+from itertools import islice
 
 from guance.contracts import EngineUpdate, SourceFrame
-from guance.infrastructure.protocol.live import GAME_HOST, parse_aggregate
+from guance.public_state_contract import CanonicalGuandanPublicState
 from .events import (ActionEvent, DealEvent, InformationalEvent, OwnSeatCandidateEvent,
-                      SeatRelation, SettlementEvent, SourceMeta, StartEvent)
+                      SeatRelation, SettlementEvent, SourceMeta, StartEvent,
+                      DeclaredActionCommitted, ExchangeResolvedObserved,
+                      OwnExchangeSelectionObserved, PhaseObserved, PublicResultObserved)
 from .state import GameState, SeatConfirmationConflict, StateError
+
+
+AggregateParser = Callable[[bytes, SourceMeta], Iterable[object]]
+EventAdapter = Callable[[object, GameState | None, str], Iterable[object]]
+EventObserver = Callable[[object, GameState, str], None]
+SessionResetObserver = Callable[[], None]
+
+
+class GameScopedUnavailable(ValueError):
+    """Invalidate only the current game while transport observation continues."""
+
+    def __init__(self, code: str, message: str = "live subset unavailable") -> None:
+        self.code = code
+        super().__init__(message)
+
+
+def _empty_aggregate_parser(_payload: bytes, _meta: SourceMeta) -> tuple[object, ...]:
+    """Safe compatibility parser used without a protocol adapter."""
+    return ()
+
+
+# Compatibility symbol for tests and embedders that provide a parser by
+# monkeypatching. It never imports or invokes infrastructure.
+parse_aggregate: AggregateParser = _empty_aggregate_parser
 
 
 class SessionEngine:
@@ -18,18 +44,35 @@ class SessionEngine:
     unknown command, reconnect, missing action, or state invariant failure.
     """
 
-    def __init__(self, session_id: str | None = None) -> None:
+    def __init__(self, session_id: str | None = None, *,
+                 aggregate_parser: AggregateParser | None = None,
+                 accepted_host: str | None = None,
+                 event_adapter: EventAdapter | None = None,
+                 event_observer: EventObserver | None = None,
+                 reset_observer: SessionResetObserver | None = None) -> None:
         self.session_id = session_id or "session"
+        self._aggregate_parser = aggregate_parser
+        self._accepted_host = accepted_host
+        self._event_adapter = event_adapter
+        self._event_observer = event_observer
+        self._reset_observer = reset_observer
         self._state: GameState | None = None
         self._game_counter = 0
         self._latest_observation = None
+        self._latest_public_state_v2: CanonicalGuandanPublicState | None = None
         self._paused_reason = ""
         self._connection_id = ""
         self._last_sequence = -1
+        self._game_invalid_reason = ""
 
     @property
     def latest_observation(self):
         return self._latest_observation
+
+    @property
+    def latest_public_state_v2(self) -> CanonicalGuandanPublicState | None:
+        """Latest partial public+self facts; never a model-ready assertion."""
+        return self._latest_public_state_v2
 
     @property
     def paused(self) -> bool:
@@ -42,9 +85,13 @@ class SessionEngine:
     def reset(self, reason: str = "") -> None:
         self._state = None
         self._latest_observation = None
+        self._latest_public_state_v2 = None
         self._paused_reason = reason
         self._connection_id = ""
         self._last_sequence = -1
+        self._game_invalid_reason = ""
+        if self._reset_observer is not None:
+            self._reset_observer()
 
     def confirm_my_seat_relative(
         self, relation: SeatRelation | str, *, captured_at: float | None = None,
@@ -93,9 +140,13 @@ class SessionEngine:
         if self._paused_reason:
             return [EngineUpdate(kind="error", message=self._paused_reason,
                                  error_code="engine_paused")]
-        if frame.host and frame.host != GAME_HOST:
+        if self._accepted_host is not None and frame.host != self._accepted_host:
             return []
-        if frame.connection_id and self._connection_id and frame.connection_id != self._connection_id:
+        if type(frame.sequence) is not int or not 0 <= frame.sequence < 2**63:
+            return self._pause("capture sequence invalid", "frame_sequence_invalid")
+        if type(frame.connection_id) is not str:
+            return self._pause("capture connection invalid", "frame_connection_invalid")
+        if self._last_sequence >= 0 and frame.connection_id != self._connection_id:
             # A terminal game is a safe boundary: accept a new transport, but
             # never append its events to the completed game.  A live game must
             # remain fail-closed until the caller explicitly resets the engine.
@@ -106,15 +157,19 @@ class SessionEngine:
                 # new game boundary.
                 self._state = None
                 self._latest_observation = None
+                self._latest_public_state_v2 = None
                 self._connection_id = frame.connection_id
                 self._last_sequence = -1
             else:
                 return self._pause("capture connection changed; reconnect requires a fresh game")
-        elif frame.connection_id:
+        else:
             self._connection_id = frame.connection_id
-        if frame.sequence and self._last_sequence >= 0 and frame.sequence <= self._last_sequence:
-            return self._pause("capture frame sequence repeated or went backwards")
-        self._last_sequence = max(self._last_sequence, frame.sequence)
+        if self._last_sequence >= 0:
+            if frame.sequence <= self._last_sequence:
+                return self._pause("capture frame sequence repeated or went backwards", "frame_sequence_repeated")
+            if frame.sequence != self._last_sequence + 1:
+                return self._pause("capture frame sequence gap", "frame_sequence_gap")
+        self._last_sequence = frame.sequence
 
         # Both transport directions are recorded for offline forensics, but only
         # server frames are authoritative game input.  A missing/unknown
@@ -127,24 +182,68 @@ class SessionEngine:
                 "frame_direction_unknown",
             )
         try:
-            events = parse_aggregate(
+            parser = self._aggregate_parser or parse_aggregate
+            # Materialize before mutation: lazy parser failures cannot publish
+            # a partially accepted aggregate or echo untrusted exception text.
+            events = tuple(islice(parser(
                 frame.payload,
                 SourceMeta(received_at=frame.received_at, sequence=frame.sequence,
                            connection_id=frame.connection_id, message_index=frame.sequence),
-            )
-        except (ValueError, TypeError) as exc:
-            return self._pause(f"protocol frame rejected: {exc}", "protocol_rejected")
+            ), 129))
+            if len(events) > 128:
+                raise ValueError("aggregate event limit exceeded")
+        except (ValueError, TypeError):
+            return self._pause("protocol frame rejected", "protocol_rejected")
         updates: list[EngineUpdate] = []
         for event in events:
-            updates.extend(self._apply_event(event, frame.received_at, frame.sequence))
-            if self._paused_reason:
-                break
+            if self._game_invalid_reason:
+                if not isinstance(event, DealEvent):
+                    continue
+                self._state = None
+                self._latest_observation = None
+                self._latest_public_state_v2 = None
+                self._game_invalid_reason = ""
+            try:
+                adapted = (tuple(self._event_adapter(event, self._state, self.session_id))
+                           if self._event_adapter is not None else (event,))
+            except GameScopedUnavailable as exc:
+                updates.extend(self._invalidate_game(str(exc), exc.code))
+                continue
+            except (ValueError, TypeError):
+                updates.extend(self._invalidate_game("live subset unavailable",
+                                                     "LIVE_STATE_UNAVAILABLE"))
+                continue
+            for accepted in adapted:
+                updates.extend(self._apply_event(accepted, frame.received_at, frame.sequence))
+                if self._paused_reason:
+                    # Never return earlier observations as trusted when a later
+                    # event invalidates this frame's chain.
+                    return [update for update in updates if update.kind == "error"]
+                if self._state is not None and self._event_observer is not None:
+                    try:
+                        self._event_observer(accepted, self._state, self.session_id)
+                    except GameScopedUnavailable as exc:
+                        updates.extend(self._invalidate_game(str(exc), exc.code))
+                        break
+                    except (ValueError, TypeError):
+                        updates.extend(self._invalidate_game("live subset unavailable",
+                                                             "LIVE_STATE_UNAVAILABLE"))
+                        break
         return updates
 
     def _apply_event(self, event: object, captured_at: float, source_sequence: int) -> list[EngineUpdate]:
+        try:
+            return self._apply_event_checked(event, captured_at, source_sequence)
+        except (ValueError, TypeError):
+            return self._pause("confirmed state rejected", "state_invalid")
+
+    def _apply_event_checked(self, event: object, captured_at: float,
+                             source_sequence: int) -> list[EngineUpdate]:
         if isinstance(event, InformationalEvent):
-            if self._state and self._state.phase == "active" and event.command == 3010:
-                return self._pause("reconnect or snapshot command received during active game")
+            # 3010 has only an observed structural contract.  It is not a
+            # verified reconnect marker and must not sever a same-connection
+            # game chain or mutate state.  Transport connection IDs and
+            # sequence continuity remain the authoritative reconnect guards.
             if self._state is not None and event.command in {3002, 3003}:
                 self._state.apply_informational(event)
                 # Evidence is display-only. Do not emit an observation or
@@ -202,6 +301,21 @@ class SessionEngine:
             elif isinstance(event, SettlementEvent):
                 self._state.apply_settlement(event)
                 kind = "settlement"
+            elif type(event) is PhaseObserved:
+                self._state.apply_phase_observed(event)
+                kind = "explicit-phase"
+            elif type(event) is PublicResultObserved:
+                self._state.apply_previous_result(event)
+                kind = "previous-result"
+            elif type(event) is DeclaredActionCommitted:
+                self._state.apply_declared_action(event)
+                kind = "declared-action"
+            elif type(event) is ExchangeResolvedObserved:
+                self._state.apply_exchange_resolved(event)
+                kind = "resolved-exchange"
+            elif type(event) is OwnExchangeSelectionObserved:
+                self._state.apply_own_exchange_selection(event)
+                kind = "self-selection"
             else:
                 return self._pause("unsupported protocol event", "event_unsupported")
         except SeatConfirmationConflict as exc:
@@ -233,6 +347,7 @@ class SessionEngine:
         self, reason: str, source_sequence: int, captured_at: float,
     ) -> EngineUpdate:
         assert self._state is not None
+        self._latest_public_state_v2 = self._state.public_state_v2(self.session_id)
         snapshot = self._state.snapshot()
         return EngineUpdate(
             kind="state", message=reason,
@@ -253,7 +368,15 @@ class SessionEngine:
                 "table": self._state.table_snapshot(self.session_id, captured_at),
             })
 
+    def _invalidate_game(self, message: str, code: str) -> list[EngineUpdate]:
+        self._game_invalid_reason = code
+        self._latest_observation = None
+        self._latest_public_state_v2 = None
+        return [EngineUpdate(kind="error", message=message, error_code=code,
+                             data={"scope": "game", "recover_on_next_deal": True})]
+
     def _pause(self, message: str, code: str = "capture_paused") -> list[EngineUpdate]:
         self._paused_reason = message
         self._latest_observation = None
+        self._latest_public_state_v2 = None
         return [EngineUpdate(kind="error", message=message, error_code=code)]

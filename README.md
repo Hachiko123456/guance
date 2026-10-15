@@ -4,7 +4,7 @@
 
 Guance 面向 Windows 10/11 x64。在用户明确授权的本机环境中读取服务端牌局消息，将二进制记录转换为可校验的公开动作，再由本地 FableDan 模型给出候选建议。它不接管游戏操作，最终选择与实际出牌始终由用户完成。
 
-> **开发版，不是已完成实机验收的发行版。** 本次文档整理以业务源码提交 `957b9c3` 为基线，另行记录已研究、但尚未随该基线提交的协议修正。文档更新不代表这些修正已发布。已知限制见下文；不要仅凭一张界面截图或一次测试成功就用于真实对局。
+> **本地 experimental/evaluation-only 候选，不是 production release。** 当前源码候选包含已实现的协议解析、公开+self 状态重建、浮窗、模型后端和 runtime 生命周期修正，并已完成 Candidate 9 模型切换事务修复后的可复现 no-capture package 复验。Candidate 9 的 no-capture package 排除独立 Python 3.14 capture helper，因此 capture capability 不可用；显式模型选择在保存、加载或清理失败时会撤销旧 client，阻断旧回调与后续提交；失败后仅能通过新的显式选择恢复。冻结包内 external MARVEL 保持 unavailable/fail-closed，不会回退到其他 provider；本地 FableDan 已通过 frozen load/recommend/close/stop 验证。`production_ready=false`、full live coverage=`BLOCKED`、real live V2 positive artifact=`UNVERIFIED`、`publish=false`。
 
 ## 导航
 
@@ -12,6 +12,7 @@ Guance 面向 Windows 10/11 x64。在用户明确授权的本机环境中读取�
 - [快速开始](#快速开始)
 - [技术栈](#技术栈)
 - [架构与数据流](#架构与数据流)
+- [模型后端架构](docs/MODEL_BACKENDS.md)
 - [报文如何变成牌局](#报文如何变成牌局)
 - [牌码与座位](#牌码与座位)
 - [本地模型如何工作](#本地模型如何工作)
@@ -21,6 +22,7 @@ Guance 面向 Windows 10/11 x64。在用户明确授权的本机环境中读取�
 - [目录与阅读路线](#目录与阅读路线)
 - [已知限制](#已知限制)
 - [贡献与第三方说明](#贡献与第三方说明)
+- [模型后端架构](docs/MODEL_BACKENDS.md)
 - [完整文档](#完整文档)
 
 ## 功能与边界
@@ -184,11 +186,13 @@ code = (copy_index << 8) | (suit_code << 4) | rank_code
 
 客户端使用容量为 1 的待处理请求队列，优先保留最新局面。推理在独立进程运行，限制数值库线程；超时或 worker 异常时清理进程，不静默切换成规则推荐。候选 `score` 是模型评分，不应显示为经过校准的胜率。
 
+`guandan_marvel_v2` 当前仅为 experimental/evaluation-only 本地接线：固定 checkpoint 可在显式 deployment bundle 下完成受限加载，但现有 live public+self 状态仍不完整，因此 UI/provider 显示 unavailable 而不是 ready。其 `marvel_v2_policy_path_score` 只标为策略/路径分数（非胜率）；`production_ready=false`，不替代默认 FableDan。详见 `docs/MODEL_BACKENDS.md`。
+
 ## 界面与线程
 
 QML 描述布局，ViewModel 管理属性和意图，控制器执行实际业务。来自后台线程的记录复制后经 Qt queued signal 送到 UI 线程，避免后台直接操作控件。
 
-主窗口与浮窗共用展示数据，进入浮窗不应该停止采集。关闭浮窗、停止助手和退出应用是三个不同动作。自动尺寸、固定记牌器和新的两列出牌布局仍属于未随本次提交发布的本地 UI 候选，不作为本次已完成能力展示。
+主窗口与浮窗共用展示数据，进入浮窗不应该停止采集。关闭浮窗、停止助手和退出应用是三个不同动作。当前 experimental candidate 已包含自动尺寸、固定记牌器和两列出牌布局；这些界面能力经过自动化与 Windows 候选验收，但不构成 production readiness、完整 live coverage 或模型强度声明。
 
 ## 配置与本地数据
 
@@ -271,6 +275,7 @@ Guance.spec                手工维护的构建规格
 | [协议字段字典](docs/PROTOCOL.md) | 头部偏移、wire 类型、命令字段、历史格式、证据等级 |
 | [集成契约](docs/INTEGRATION_CONTRACT.md) | 数据结构、信号槽、IPC、失效规则 |
 | [安全](docs/SECURITY.md) | 授权、代理恢复、敏感数据、导出和分享限制 |
+| [训练数据契约](docs/TRAINING_DATA.md) | 后台记录、旧局转换、字段语义、FableDan 派生和验收边界 |
 | [诊断](docs/DIAGNOSTICS.md) | 日志、错误定位和恢复路径 |
 | [构建](docs/BUILD.md) | 依赖、本地资产、spec、打包命令和检查 |
 | [发布](docs/RELEASE.md) | 目录交付、验收、版本与目标机检查 |

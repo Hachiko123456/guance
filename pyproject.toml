@@ -25,10 +25,12 @@ where = ["src"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+addopts = "-m 'not local_capture'"
 markers = [
   "unit: fast isolated tests",
   "integration: multi-component tests",
   "windows_integration: requires Windows desktop facilities",
+  "local_capture: explicit private local-capture acceptance; never skipped when selected",
 ]
 
 [tool.ruff]

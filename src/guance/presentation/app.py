@@ -8,6 +8,9 @@ from typing import Any
 from PySide6.QtCore import QUrl
 from PySide6.QtQml import QQmlApplicationEngine
 
+# Register the presentation-only floating window type before QML loads it.
+from .floating_window import FloatingWindow  # noqa: F401
+
 
 def _qml_root() -> Path:
     """Return the QML directory in a source checkout or PyInstaller bundle."""

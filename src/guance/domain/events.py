@@ -5,6 +5,11 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Literal
 
+from guance.public_state_contract import (
+    ExchangeState, ExchangeTransfer, Knowledge, EvidenceRef, Phase,
+    PreviousResultSummary, PublicDeclaration, PublicStateContractError,
+)
+
 ActionKind = Literal["play", "pass"]
 UNCONFIRMED_SEAT = -1
 
@@ -27,6 +32,10 @@ class SourceMeta:
     connection_id: str = ""
     message_index: int = -1
     sub_index: int = -1
+    record_type: int = 0
+    record_version: int = 0
+    command_variant: int = 0
+    group_shape: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,6 +99,58 @@ class SettlementEvent:
 
 
 @dataclass(frozen=True, slots=True)
+class ExchangeInitializationEvent:
+    """Observed 3011 boundary. Internal fields intentionally remain opaque."""
+
+    meta: SourceMeta = field(default_factory=SourceMeta)
+
+
+@dataclass(frozen=True, slots=True)
+class TributeSelectionEvent:
+    """Observed 3012 public candidate fields; private hand bytes are discarded."""
+
+    donor_seat: int
+    tribute_card: int
+    tribute_cards: tuple[int, ...]
+    recipient_seats: tuple[int, ...]
+    meta: SourceMeta = field(default_factory=SourceMeta)
+
+
+@dataclass(frozen=True, slots=True)
+class TributeSummaryEntry:
+    tribute_card: int
+    donor_seat: int
+    recipient_seat: int
+
+
+@dataclass(frozen=True, slots=True)
+class TributeSummaryEvent:
+    entries: tuple[TributeSummaryEntry, ...]
+    meta: SourceMeta = field(default_factory=SourceMeta)
+
+
+@dataclass(frozen=True, slots=True)
+class ReturnSelectionEvent:
+    source_seat: int
+    return_card: int
+    target_seat: int
+    meta: SourceMeta = field(default_factory=SourceMeta)
+
+
+@dataclass(frozen=True, slots=True)
+class ExchangeCardSource:
+    card: int
+    source_seat: int
+
+
+@dataclass(frozen=True, slots=True)
+class ExchangeSummaryEvent:
+    card_sources: tuple[ExchangeCardSource, ...]
+    return_entries: tuple[ReturnSelectionEvent, ...]
+    meta: SourceMeta = field(default_factory=SourceMeta)
+
+
+@dataclass(frozen=True, slots=True)
 class InformationalEvent:
     command: int
     # 3003 carries pre-play numeric evidence whose business semantics are not
@@ -101,4 +162,117 @@ class InformationalEvent:
     meta: SourceMeta = field(default_factory=SourceMeta)
 
 
-ProtocolEvent = DealEvent | StartEvent | OwnSeatCandidateEvent | ActionEvent | SettlementEvent | InformationalEvent
+def _semantic_require(condition: bool) -> None:
+    if not condition:
+        raise PublicStateContractError("SEMANTIC_EVENT_INVALID")
+
+
+def _semantic_seat(value: object) -> bool:
+    return type(value) is int and 0 <= value < 4
+
+
+@dataclass(frozen=True, slots=True)
+class PhaseObserved:
+    """Explicit confirmed semantics; no current live command produces this event."""
+
+    phase: Phase
+    active_seat: int | None = None
+    meta: SourceMeta = field(default_factory=SourceMeta)
+
+    def validate(self) -> None:
+        _semantic_require(type(self.phase) is str and self.phase in {
+            "TRIBUTE", "RETURN", "LEAD_PLAY", "FOLLOW_PLAY", "TERMINAL",
+        })
+        _semantic_require(self.active_seat is None or _semantic_seat(self.active_seat))
+
+
+@dataclass(frozen=True, slots=True)
+class PublicResultObserved:
+    """A confirmed, explicitly associated *previous* game's public result."""
+
+    result: PreviousResultSummary
+    meta: SourceMeta = field(default_factory=SourceMeta)
+
+    def validate(self) -> None:
+        _semantic_require(type(self.result) is PreviousResultSummary)
+        self.result.to_dict()
+
+
+@dataclass(frozen=True, slots=True)
+class DeclaredActionCommitted:
+    """A confirmed play plus its lossless declaration, not a client intention.
+
+    The legacy action still supplies its own observed combo code. No mapping
+    from that opaque code to this declaration is defined or assumed.
+    """
+
+    action: ActionEvent
+    declaration: PublicDeclaration
+
+    def validate(self) -> None:
+        try:
+            _semantic_require(type(self.action) is ActionEvent and self.action.kind == "play")
+            _semantic_require(type(self.declaration) is PublicDeclaration)
+            self.declaration.to_dict()
+            _semantic_require(type(self.action.cards) is tuple)
+            _semantic_require(set(self.action.cards) == set(self.declaration.canonical_cards))
+        except PublicStateContractError:
+            raise PublicStateContractError("SEMANTIC_EVENT_INVALID") from None
+
+
+@dataclass(frozen=True, slots=True)
+class ExchangeResolvedObserved:
+    """Public, resolved transfers and optional explicitly observed exchange facts.
+
+    None means unobserved, while an explicit empty tuple/False is a fact. This
+    event deliberately has no private selection or any player's hidden hand.
+    """
+
+    transfers: tuple[ExchangeTransfer, ...]
+    tribute_donors: tuple[int, ...] | None = None
+    tribute_order: tuple[int, ...] | None = None
+    anti_tribute: bool | None = None
+    return_obligations: tuple[tuple[int, int], ...] | None = None
+    meta: SourceMeta = field(default_factory=SourceMeta)
+
+    def validate(self) -> None:
+        _semantic_require(type(self.transfers) is tuple and len(self.transfers) <= 8)
+        _semantic_require(all(type(t) is ExchangeTransfer for t in self.transfers))
+        for values in (self.tribute_donors, self.tribute_order, self.return_obligations):
+            _semantic_require(values is None or type(values) is tuple)
+        if self.return_obligations is not None:
+            _semantic_require(all(type(pair) is tuple for pair in self.return_obligations))
+        evidence = EvidenceRef("semantic.exchange")
+        def fact(value: object) -> Knowledge:
+            return (Knowledge.unsupported("exchange_field_unobserved") if value is None
+                    else Knowledge.known(value, evidence))
+        ExchangeState(fact(self.tribute_donors), fact(self.tribute_order),
+                      fact(self.anti_tribute), fact(self.return_obligations),
+                      fact(self.transfers), Knowledge.unsupported("selection_unobserved")).to_dict()
+
+
+@dataclass(frozen=True, slots=True)
+class OwnExchangeSelectionObserved:
+    """Self-visible selection, never a resolved action and never another seat's."""
+
+    observer_seat: int
+    phase: Literal["TRIBUTE", "RETURN"]
+    cards: tuple[int, ...] = field(repr=False)
+    meta: SourceMeta = field(default_factory=SourceMeta)
+
+    def validate(self) -> None:
+        _semantic_require(_semantic_seat(self.observer_seat))
+        _semantic_require(type(self.phase) is str and self.phase in {"TRIBUTE", "RETURN"})
+        _semantic_require(type(self.cards) is tuple and len(self.cards) <= 1)
+        evidence = EvidenceRef("semantic.self_selection")
+        missing = Knowledge.unsupported("exchange_field_unobserved")
+        ExchangeState(missing, missing, missing, missing, missing,
+                      Knowledge.known(self.cards, evidence)).to_dict()
+
+
+SemanticEvent = (PhaseObserved | PublicResultObserved | DeclaredActionCommitted
+                 | ExchangeResolvedObserved | OwnExchangeSelectionObserved)
+ProtocolEvent = (DealEvent | StartEvent | OwnSeatCandidateEvent | ActionEvent
+                 | SettlementEvent | ExchangeInitializationEvent | TributeSelectionEvent
+                 | TributeSummaryEvent | ReturnSelectionEvent | ExchangeSummaryEvent
+                 | InformationalEvent | SemanticEvent)

@@ -205,6 +205,7 @@ ScrollView {
                         Flow { id: candidateFlow; anchors.fill: parent; anchors.margins: 9; spacing: 5
                             Text { text: modelData.kind; color: Theme.muted; font.family: Theme.family; font.pixelSize: 12 }
                             Repeater { model: modelData.cards; CardFace { required property var modelData; cardData: modelData; mini: true } }
+                            Text { visible: modelData.score !== null && modelData.score !== undefined; text: modelData.scoreLabel + "：" + Number(modelData.score).toFixed(4); color: Theme.faint; font.family: Theme.family; font.pixelSize: 10 }
                         }
                     }
                 }
