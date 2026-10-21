@@ -106,6 +106,17 @@ def _bounded_code(value: object) -> str:
     return code if code in _ALLOWED_CODES else "MODEL_INFERENCE_FAILED"
 
 
+def _failure_code(value: object) -> str:
+    """Bounded harness code for progress/records (never carries payload data)."""
+    code = getattr(value, "code", None)
+    if isinstance(code, str):
+        return _bounded_code(code)
+    text = str(value) if isinstance(value, RuntimeError) else ""
+    if text and text.replace("_", "").isalnum() and len(text) <= 64:
+        return text
+    return "MODEL_INFERENCE_FAILED"
+
+
 def _write(path: Path, value: dict[str, Any]) -> None:
     validate_safe_output(value)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -325,12 +336,32 @@ def _device_summary(metadata: dict[str, Any]) -> dict[str, Any]:
 
 def run_fixed(bundle_dir: Path, device: str, output: Path, *, workload_timeout: float,
               executable: Path | None = None, packaged_env: bool = False,
-              expect_device: str | None = None) -> int:
+              expect_device: str | None = None, progress: Path | None = None,
+              load_timeout: float = 180.0) -> int:
     gate = _fixed_input_gate(bundle_dir)
     replay, classification = _prepare_fixed()
     oracle = VerifiedGuandanRulesOracle(RUNTIME_SOURCE)
     records = []
     saved_env = {}
+    total = len(classification["eligible"])
+
+    def emit_progress(event: dict[str, Any]) -> None:
+        # Append-only coarse progress: request index, timing and status only.
+        # Decision payloads never enter this file.
+        if progress is None:
+            return
+        progress.parent.mkdir(parents=True, exist_ok=True)
+        with progress.open("a", encoding="utf-8", newline="\n") as stream:
+            stream.write(json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n")
+            stream.flush()
+
+    emit_progress({
+        "event": "start", "requested_device": device, "expect_device": expect_device,
+        "total_requests": total, "bundle_dir": str(bundle_dir),
+        "worker_executable": str(executable) if executable is not None else "",
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+    })
+    started_run = time.perf_counter()
     if packaged_env:
         for key in ("GUANCE_MARVEL_V2_SOURCE", "GUANCE_MARVEL_V2_CHECKPOINT"):
             saved_env[key] = os.environ.pop(key, None)
@@ -341,10 +372,17 @@ def run_fixed(bundle_dir: Path, device: str, output: Path, *, workload_timeout: 
     try:
         with scope:
             worker = _Worker(bundle_dir, device, workload_timeout=workload_timeout,
-                             executable=executable)
+                             executable=executable, load_timeout=load_timeout)
             try:
                 final = worker.start()
                 metadata = _device_summary(worker.metadata)
+                emit_progress({
+                    "event": "loaded", "elapsed_s": round(time.perf_counter() - started_run, 3),
+                    "model_status": final.get("model_status"),
+                    "actual_device": metadata.get("actual_device"),
+                    "model_version": metadata.get("model_version"),
+                    "model_sha256": metadata.get("model_sha256"),
+                })
                 if expect_device is not None and metadata.get("actual_device") != expect_device:
                     _fail("UNEXPECTED_DEVICE")
                 if device == "cuda" and metadata.get("actual_device") != "cuda:0":
@@ -352,7 +390,7 @@ def run_fixed(bundle_dir: Path, device: str, output: Path, *, workload_timeout: 
                 if device == "cpu" and metadata.get("actual_device") != "cpu":
                     _fail("CPU_NOT_SELECTED")
                 seen: set[str] = set()
-                for item in classification["eligible"]:
+                for index, item in enumerate(classification["eligible"]):
                     context = item["context"]
                     payload = item["payload"]
                     if context.decision_identity in seen:
@@ -360,7 +398,16 @@ def run_fixed(bundle_dir: Path, device: str, output: Path, *, workload_timeout: 
                     seen.add(context.decision_identity)
                     before = _hash_json(payload)
                     started = time.perf_counter()
-                    result = worker.submit(payload)
+                    try:
+                        result = worker.submit(payload)
+                    except Exception as exc:  # noqa: BLE001 - bounded progress record
+                        emit_progress({
+                            "event": "request_failed", "index": index + 1, "total": total,
+                            "elapsed_ms": round((time.perf_counter() - started) * 1000.0, 3),
+                            "cumulative_s": round(time.perf_counter() - started_run, 3),
+                            "error": _failure_code(exc),
+                        })
+                        raise
                     elapsed = (time.perf_counter() - started) * 1000.0
                     if _hash_json(payload) != before or before != context.payload_hash:
                         _fail("MODEL_INPUT_MUTATED")
@@ -368,11 +415,26 @@ def run_fixed(bundle_dir: Path, device: str, output: Path, *, workload_timeout: 
                     validated["action_sha256"] = _action_record(result)["action_sha256"]
                     validated["latency_ms"] = round(elapsed, 3)
                     records.append(validated)
+                    emit_progress({
+                        "event": "recommended", "index": index + 1, "total": total,
+                        "elapsed_ms": validated["latency_ms"],
+                        "cumulative_s": round(time.perf_counter() - started_run, 3),
+                        "kind": validated["kind"],
+                    })
                 if worker.errors():
                     _fail("MODEL_ERRORS_PRESENT")
                 fallback = int(metadata.get("device_fallback") is True)
             finally:
                 worker.close()
+    except Exception as exc:  # noqa: BLE001 - bounded final progress record
+        emit_progress({
+            "event": "finished", "status": "failed",
+            "reason": _failure_code(exc),
+            "recommendations": len(records), "total_requests": total,
+            "last_success_index": len(records),
+            "elapsed_s": round(time.perf_counter() - started_run, 3),
+        })
+        raise
     finally:
         for key, value in saved_env.items():
             if value is not None:
@@ -387,7 +449,12 @@ def run_fixed(bundle_dir: Path, device: str, output: Path, *, workload_timeout: 
         "recommendation_displayed": False,
         "requested_device": device,
         "expect_device": expect_device,
-        "worker_executable": str(executable) if executable is not None else "",
+        # Evidence carries identity, not host paths: the privacy contract used by
+        # the acceptance writer rejects absolute paths, and the EXE hash plus name
+        # already pin which binary produced the matrix.
+        "worker_executable": Path(executable).name if executable is not None else "",
+        "worker_executable_sha256": (
+            _sha256_file(Path(executable))[0] if executable is not None else ""),
         "package_resolved_assets": packaged_env,
         "runtime": metadata,
         "load_seconds": round(worker.load_seconds, 3),
@@ -406,6 +473,12 @@ def run_fixed(bundle_dir: Path, device: str, output: Path, *, workload_timeout: 
             for item in classification["ineligible"]
         ],
     }
+    emit_progress({
+        "event": "finished", "status": "passed",
+        "recommendations": len(records), "total_requests": total,
+        "last_success_index": len(records),
+        "elapsed_s": round(time.perf_counter() - started_run, 3),
+    })
     _write(output, summary)
     print(json.dumps({k: summary[k] for k in (
         "requested_device", "runtime", "load_seconds", "provider_eligible_count",
@@ -1133,11 +1206,14 @@ def main() -> int:
     fixed.add_argument("--packaged-env", action="store_true",
                        help="clear MARVEL source/checkpoint env so the package must self-locate")
     fixed.add_argument("--expect-device", choices=("cpu", "cuda:0"), default=None)
+    fixed.add_argument("--progress", type=Path, default=None,
+                       help="append coarse per-request progress JSONL (no decision payloads)")
     fixed.set_defaults(func=lambda args: run_fixed(args.bundle_dir, args.device, args.output,
                                                    workload_timeout=args.workload_timeout,
                                                    executable=args.worker_executable,
                                                    packaged_env=args.packaged_env,
-                                                   expect_device=args.expect_device))
+                                                   expect_device=args.expect_device,
+                                                   progress=args.progress))
     smoke = common("smoke")
     smoke.set_defaults(func=lambda args: run_smoke(args.bundle_dir.parent, args.device,
                                                    args.output,

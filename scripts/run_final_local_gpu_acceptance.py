@@ -456,57 +456,206 @@ def cmd_marvel(args: argparse.Namespace) -> int:
     return 0 if good else 2
 
 
+# The fixed 34/32/32 matrix runs three modes against the same extracted package.
+# Each mode is a separate bounded invocation so that a slow CPU mode cannot push
+# the whole matrix past a single foreground window; every mode still has to pass
+# the full 32 recommendation checks before ``merge-fixed`` accepts the result.
+FIXED_MODES: dict[str, dict[str, Any]] = {
+    "gpu_auto": {"device": "auto", "expect": "cuda:0", "mask": None,
+                 "output": "fixed-input-gpu.json"},
+    "forced_cpu": {"device": "cpu", "expect": "cpu", "mask": None,
+                   "output": "fixed-input-cpu.json"},
+    "masked_cpu": {"device": "auto", "expect": "cpu", "mask": "-1",
+                   "output": "fixed-input-masked.json"},
+}
+FIXED_MODE_CHOICES = tuple(FIXED_MODES)
+
+
+def _progress_summary(progress: Path) -> dict[str, Any]:
+    events: list[dict[str, Any]] = []
+    if progress.is_file():
+        for line in progress.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                events.append(json.loads(line))
+    recommended = [item for item in events if item.get("event") == "recommended"]
+    failed = [item for item in events if item.get("event") == "request_failed"]
+    finished = [item for item in events if item.get("event") == "finished"]
+    return {
+        "events": len(events),
+        "recommended_count": len(recommended),
+        "last_success_index": (recommended[-1]["index"] if recommended else 0),
+        "last_success_cumulative_s": (recommended[-1].get("cumulative_s") if recommended else None),
+        "failed_request": (failed[-1] if failed else None),
+        "finished": (finished[-1] if finished else None),
+        "loaded": next((item for item in events if item.get("event") == "loaded"), None),
+    }
+
+
 def cmd_fixed(args: argparse.Namespace) -> int:
     package = args.package.resolve()
     out = args.out.resolve()
+    spec = FIXED_MODES[args.mode]
     _frozen, gpu = _worker_modules()
     bundle = package / PACKAGE_BUNDLE_RELATIVE
     exe = package / "Guance.exe"
+    output = out / spec["output"]
+    progress = out / f"fixed-progress-{args.mode}.jsonl"
+    if progress.exists():
+        progress.unlink()
     saved = {name: os.environ.pop(name, None) for name in
              ("GUANCE_MARVEL_V2_SOURCE", "GUANCE_MARVEL_V2_CHECKPOINT",
-              "CUDA_VISIBLE_DEVICES")}
-    results = {}
+              "CUDA_VISIBLE_DEVICES", "GUANCE_DATA_DIR")}
+    data_dir = out / f"fixed-{args.mode}-data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    os.environ["GUANCE_DATA_DIR"] = str(data_dir)
+    record: dict[str, Any] = {
+        "schema": "guance-final-gpu-fixed-mode-v1", "mode": args.mode,
+        "isolated_data_dir": str(data_dir),
+        "package": str(package), "exe": str(exe), "exe_sha256": _sha256(exe),
+        "bundle": str(bundle), "device": spec["device"], "expect_device": spec["expect"],
+        "cuda_visible_devices": spec["mask"], "load_timeout_s": 600.0,
+        "output": str(output),
+        "progress": str(progress),
+        "started_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+    }
+    started = time.perf_counter()
     try:
-        results["gpu_auto"] = _fixed_run(gpu, bundle, "auto", out / "fixed-input-gpu.json",
-                                         exe, "cuda:0")
-        results["forced_cpu"] = _fixed_run(gpu, bundle, "cpu", out / "fixed-input-cpu.json",
-                                           exe, "cpu")
-        os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
-        results["masked_cpu"] = _fixed_run(gpu, bundle, "auto", out / "fixed-input-masked.json",
-                                           exe, "cpu")
-        os.environ.pop("CUDA_VISIBLE_DEVICES", None)
+        if spec["mask"] is not None:
+            os.environ["CUDA_VISIBLE_DEVICES"] = spec["mask"]
+        # Loading the vendored Torch/CUDA closure from a cold disk cache can take
+        # far longer than the interactive default; the per-request/workload budget
+        # is unchanged and every request is still fully validated.
+        gpu.run_fixed(bundle, spec["device"], output, workload_timeout=900.0,
+                      executable=exe, packaged_env=True, expect_device=spec["expect"],
+                      progress=progress, load_timeout=600.0)
+        record.update(status="passed", exit=0)
+    except Exception as exc:  # noqa: BLE001 - bounded acceptance evidence
+        record.update(status="failed", exit=2, reason=gpu._failure_code(exc))
     finally:
         for name, value in saved.items():
             if value is not None:
                 os.environ[name] = value
             else:
                 os.environ.pop(name, None)
-    good = all(item.get("exit") == 0 for item in results.values())
-    summary = {"schema": "guance-final-gpu-fixed-matrix-v1", "results": results,
-               "status": "passed" if good else "failed"}
+    record["elapsed_s"] = round(time.perf_counter() - started, 3)
+    record["finished_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    record["progress_summary"] = _progress_summary(progress)
+    _write(out / f"fixed-mode-{args.mode}.json", record)
+    print(json.dumps({"mode": args.mode, "status": record["status"],
+                      "exit": record["exit"], "elapsed_s": record["elapsed_s"],
+                      "last_success_index": record["progress_summary"]["last_success_index"],
+                      "recommended": record["progress_summary"]["recommended_count"]},
+                     sort_keys=True))
+    return 0 if record["status"] == "passed" else 2
+
+
+_FIXED_EXPECTED = {
+    "provider_eligible_count": 34,
+    "strict_eligible_count": 32,
+    "strict_ineligible_count": 2,
+    "recommendation_count": 32,
+    "recommendation_error_count": 0,
+    "model_fallback_count": 0,
+    "records": 32,
+    "ineligible": 2,
+}
+
+
+def _fixed_record_checks(mode: str, data: dict[str, Any], mode_record: dict[str, Any],
+                         exe_sha: str) -> dict[str, Any]:
+    checks: dict[str, Any] = {}
+    checks["harness_status"] = mode_record.get("status") == "passed" and mode_record.get("exit") == 0
+    checks["exe_identity"] = mode_record.get("exe_sha256") == exe_sha
+    checks["counts"] = all(data.get(key) == value for key, value in _FIXED_EXPECTED.items()
+                           if key not in {"records", "ineligible"})
+    checks["record_count"] = len(data.get("records") or []) == 32
+    checks["ineligible_count"] = len(data.get("ineligible") or []) == 2
+    checks["input_immutable"] = data.get("input_immutable") is True
+    checks["no_device_fallback"] = data.get("device_fallback") in (False, 0)
+    checks["live_input_not_used"] = data.get("live_input_used") is False
+    checks["not_displayed"] = data.get("recommendation_displayed") is False
+    checks["worker_executable_matches"] = (
+        data.get("worker_executable") == "Guance.exe"
+        and data.get("worker_executable_sha256") == exe_sha)
+    actual = (data.get("runtime") or {}).get("actual_device")
+    checks["expected_device"] = actual == FIXED_MODES[mode]["expect"]
+    checks["gate_present"] = isinstance(data.get("gate"), dict) and bool(data["gate"])
+    return checks
+
+
+def cmd_merge_fixed(args: argparse.Namespace) -> int:
+    package = args.package.resolve()
+    out = args.out.resolve()
+    exe_sha = _sha256(package / "Guance.exe")
+    results: dict[str, Any] = {}
+    checks: dict[str, Any] = {}
+    identities: dict[str, Any] = {}
+    for mode in FIXED_MODE_CHOICES:
+        mode_record_path = out / f"fixed-mode-{mode}.json"
+        output = out / FIXED_MODES[mode]["output"]
+        missing = [str(path) for path in (mode_record_path, output) if not path.is_file()]
+        if missing:
+            results[mode] = {"status": "missing", "missing": missing}
+            checks[f"{mode}.present"] = False
+            continue
+        mode_record = json.loads(mode_record_path.read_text(encoding="utf-8"))
+        data = json.loads(output.read_text(encoding="utf-8"))
+        mode_checks = _fixed_record_checks(mode, data, mode_record, exe_sha)
+        checks.update({f"{mode}.{key}": value for key, value in mode_checks.items()})
+        identities[mode] = {
+            "gate_sha256": _sha256_bytes(json.dumps(data.get("gate"), sort_keys=True,
+                                                    ensure_ascii=False).encode("utf-8")),
+            "model_version": (data.get("runtime") or {}).get("model_version"),
+            "model_sha256": (data.get("runtime") or {}).get("model_sha256"),
+            "checkpoint_sha256": (data.get("gate") or {}).get("checkpoint_sha256"),
+            "deployment_sha256": (data.get("gate") or {}).get("deployment_sha256"),
+            "record_identities": sorted(str(item.get("decision_identity"))
+                                        for item in data.get("records") or []),
+            "ineligible": data.get("ineligible"),
+            "exe_sha256": mode_record.get("exe_sha256"),
+        }
+        results[mode] = {
+            "status": "passed" if all(mode_checks.values()) else "failed",
+            "exit": mode_record.get("exit"),
+            "elapsed_s": mode_record.get("elapsed_s"),
+            "started_at": mode_record.get("started_at"),
+            "finished_at": mode_record.get("finished_at"),
+            "progress": mode_record.get("progress"),
+            "progress_summary": mode_record.get("progress_summary"),
+            "summary": {key: data.get(key) for key in _FIXED_EXPECTED
+                        if key not in {"records", "ineligible"}},
+            "actual_device": (data.get("runtime") or {}).get("actual_device"),
+            "device_reason": (data.get("runtime") or {}).get("device_reason"),
+            "failed_checks": [key for key, value in mode_checks.items() if not value],
+        }
+    if len(identities) == len(FIXED_MODE_CHOICES):
+        baseline_mode = FIXED_MODE_CHOICES[0]
+        baseline = identities[baseline_mode]
+        for mode in FIXED_MODE_CHOICES:
+            item = identities[mode]
+            for key in ("gate_sha256", "model_version", "model_sha256", "checkpoint_sha256",
+                        "deployment_sha256", "record_identities", "ineligible", "exe_sha256"):
+                checks[f"identity.{mode}.{key}"] = item[key] == baseline[key]
+        checks["gate.checkpoint_matches_model"] = all(
+            item["checkpoint_sha256"] == item["model_sha256"] for item in identities.values())
+    good = all(checks.values()) and len(checks) > 0
+    summary = {
+        "schema": "guance-final-gpu-fixed-matrix-v1",
+        "split_modes": list(FIXED_MODE_CHOICES),
+        "package": str(package), "exe_sha256": exe_sha,
+        "expected": _FIXED_EXPECTED,
+        "results": results,
+        "identities": identities,
+        "checks": checks,
+        "failed_checks": sorted(key for key, value in checks.items() if not value),
+        "status": "passed" if good else "failed",
+    }
     _write(out / "fixed-matrix.json", summary)
     print(json.dumps({"status": summary["status"],
-                      "results": {key: value.get("summary", value.get("stdout", ""))[:200]
-                                  for key, value in results.items()}}, sort_keys=True))
+                      "failed_checks": summary["failed_checks"],
+                      "modes": {mode: item.get("status") for mode, item in results.items()}},
+                     sort_keys=True))
     return 0 if good else 2
-
-
-def _fixed_run(gpu, bundle: Path, device: str, output: Path, exe: Path,
-               expect: str) -> dict[str, Any]:
-    try:
-        gpu.run_fixed(bundle, device, output, workload_timeout=900.0, executable=exe,
-                      packaged_env=True, expect_device=expect)
-        data = json.loads(output.read_text(encoding="utf-8"))
-        summary = {key: data.get(key) for key in (
-            "recommendation_count", "provider_eligible_count", "strict_eligible_count",
-            "strict_ineligible_count", "model_fallback_count", "input_immutable",
-            "device_fallback")}
-        summary["actual_device"] = (data.get("runtime") or {}).get("actual_device")
-        summary["device_reason"] = (data.get("runtime") or {}).get("device_reason")
-        return {"exit": 0, "summary": json.dumps(summary, ensure_ascii=False, sort_keys=True),
-                "record": summary}
-    except Exception as exc:  # noqa: BLE001
-        return {"exit": 2, "reason": gpu._bounded_code(getattr(exc, "code", exc))}
 
 
 def cmd_negatives(args: argparse.Namespace) -> int:
@@ -518,14 +667,18 @@ def cmd_negatives(args: argparse.Namespace) -> int:
     results: dict[str, Any] = {}
     # Missing model.
     results["missing_model"] = frozen._run_missing_model(package, env)
-    # Tampered descriptor bundle (copy only; never modify the package).
+    # Tampered descriptor bundle (copy only; never modify the package).  A single
+    # appended byte changes only the descriptor size, so the manifest's recorded
+    # ``artifact_bytes`` check must reject it with exactly ARTIFACT_SIZE_MISMATCH.
+    # The expected set is explicit on purpose: accepting an arbitrary protocol or
+    # artifact error here would not prove the tamper was detected by the size
+    # integrity check rather than by an unrelated failure.
     tampered = Path(tempfile.mkdtemp(prefix="guance-tampered-bundle-"))
     shutil.copytree(package / PACKAGE_BUNDLE_RELATIVE, tampered / "bundle")
     descriptor = tampered / "bundle" / "deployment.json"
     descriptor.write_bytes(descriptor.read_bytes() + b" ")
     results["tampered_descriptor"] = _load_expect_error(
-        frozen, package, env, tampered / "bundle", {"ARTIFACT_HASH_MISMATCH", "MANIFEST_INVALID",
-                                                     "MODEL_VERSION_UNSUPPORTED", "DEPLOYMENT_INVALID"})
+        frozen, package, env, tampered / "bundle", {"ARTIFACT_SIZE_MISMATCH"})
     # Tampered checkpoint via explicit env override.
     tampered_ckpt = Path(tempfile.mkdtemp(prefix="guance-tampered-ckpt-")) / "m09_candidate_iter002000.pt"
     original = package / "_internal" / "marvel_runtime" / "checkpoint" / "m09_candidate_iter002000.pt"
@@ -536,8 +689,9 @@ def cmd_negatives(args: argparse.Namespace) -> int:
         frozen, package, ckpt_env, package / PACKAGE_BUNDLE_RELATIVE,
         {"ARTIFACT_HASH_MISMATCH", "MODEL_VERSION_UNSUPPORTED", "MODEL_UNAVAILABLE"})
     # Confirmed request against FableDan must fail closed without switching models.
-    payload, _context = _first_confirmed_payload(gpu)
-    results["stale_after_switch"] = _switch_stale_check(frozen, gpu, package, env, payload)
+    payload, context = _first_confirmed_payload(gpu)
+    results["stale_after_switch"] = _switch_stale_check(frozen, gpu, package, env, payload,
+                                                        context)
     # Malformed wire contract must be rejected before inference.
     malformed = frozen._envelope("recommend", "malformed-decision",
                                  request_kind="confirmed_decision", decision=payload)
@@ -569,6 +723,7 @@ def _load_expect_error(frozen, package: Path, env: dict[str, str], source: Path,
         good = (reply is not None and reply.get("type") == "error"
                 and code in allowed and final["exit"] == 0)
         return {"status": "passed" if good else "failed", "reply_type": reply.get("type") if reply else None,
+                "expected_codes": sorted(allowed),
                 "error_code": code, "recommendation_count": 0, "final": final}
     finally:
         if session.process.poll() is None:
@@ -576,28 +731,113 @@ def _load_expect_error(frozen, package: Path, env: dict[str, str], source: Path,
 
 
 def _switch_stale_check(frozen, gpu, package: Path, env: dict[str, str],
-                        payload: dict[str, Any]) -> dict[str, Any]:
+                        payload: dict[str, Any], context: Any) -> dict[str, Any]:
+    """Old-model request after a provider switch must fail closed.
+
+    The request envelope is fully legal and byte-for-byte consistent with the
+    decision payload: the only "stale" dimension is the model generation it was
+    prepared under.  A positive control with the identical envelope shape runs
+    before the switch and must produce a validated recommendation, so a rejection
+    can never be explained by a malformed envelope.
+    """
+    from guance.contracts import decode_canonical_advice
+
+    identity = {"session_id": payload["session_id"], "game_id": payload["game_id"],
+                "state_version": payload["state_version"]}
+
+    def strict_envelope(request_id: str, **body: Any) -> dict[str, Any]:
+        return frozen._envelope("recommend", request_id, **identity, **body)
+
+    envelope = strict_envelope("stale-after-switch", request_kind="confirmed_decision",
+                               decision=payload)
+    expected_keys = {"protocol_version", "type", "request_id", "session_id", "game_id",
+                     "state_version", "epoch", "generation", "request_kind", "decision"}
+    envelope_valid = (
+        set(envelope) == expected_keys
+        and (envelope["session_id"], envelope["game_id"], envelope["state_version"])
+        == (context.session_id, context.game_id, context.state_version)
+        and envelope["decision"] is payload
+    )
+    positive_envelope = strict_envelope("stale-positive-control",
+                                        request_kind="confirmed_decision", decision=payload)
+    view = frozen.VIEW
+    public_envelope = frozen._envelope(
+        "recommend", "post-stale-public",
+        session_id=view["session_id"], game_id=view["game_id"],
+        state_version=view["state_version"], request_kind="public", observation=view)
     session = frozen.WorkerSession(package / "Guance.exe", env)
     try:
-        session.send(frozen._envelope("load", "switch-1",
+        session.send(frozen._envelope("load", "stale-load-1",
                                       source=str(package / PACKAGE_BUNDLE_RELATIVE)))
-        _wait_types(session, {"loaded", "error"}, 180)
-        session.send(frozen._envelope("load", "switch-2",
+        first = _wait_types(session, {"loaded", "error"}, 300)
+        first_meta = (first or {}).get("metadata") or {}
+        positive: Any = None
+        positive_record: dict[str, Any] | None = None
+        if first is not None and first.get("type") == "loaded":
+            session.send(positive_envelope)
+            positive = _wait_types(session, {"result", "error"}, 300)
+            if positive is not None and positive.get("type") == "result":
+                decoded = decode_canonical_advice(positive["result"])
+                validated = gpu.validate_recommendation(context, decoded,
+                                                        gpu.VerifiedGuandanRulesOracle(gpu.RUNTIME_SOURCE))
+                positive_record = {key: validated.get(key) for key in
+                                   ("kind", "cards_count", "path_score", "valid")}
+                positive_record["status"] = positive["result"].get("status")
+                positive_record["provider"] = positive["result"].get("provider")
+        session.send(frozen._envelope("load", "stale-load-2",
                                       source=str(package / "_internal" / "data" / "profiles"
                                                  / "tencent_daguandan" / "models" / "best.npz")))
-        loaded = _wait_types(session, {"loaded", "error"}, 180)
-        session.send(frozen._envelope("recommend", "stale-decision",
-                                      request_kind="confirmed_decision", decision=payload))
-        reply = _wait_types(session, {"result", "error"}, 120)
+        loaded = _wait_types(session, {"loaded", "error"}, 300)
+        second_meta = (loaded or {}).get("metadata") or {}
+        switched = (
+            loaded is not None and loaded.get("type") == "loaded"
+            and second_meta.get("provider") == "fabledan"
+            and second_meta.get("model_sha256") != first_meta.get("model_sha256")
+        )
+        reply = None
+        if switched:
+            session.send(envelope)
+            reply = _wait_types(session, {"result", "error"}, 120)
+        # Rejection must not silently swap the provider back; a public request on
+        # the still-loaded FableDan model must answer with the FableDan provider.
+        after = None
+        if reply is not None and reply.get("type") == "error":
+            session.send(public_envelope)
+            after = _wait_types(session, {"result", "error"}, 120)
         final = session.close(graceful=True)
-        good = (loaded is not None and loaded.get("type") == "loaded"
-                and reply is not None and reply.get("type") == "error"
-                and reply.get("error_code") == "REQUEST_KIND_UNSUPPORTED"
-                and final["exit"] == 0)
-        return {"status": "passed" if good else "failed", "loaded_type": loaded.get("type") if loaded else None,
-                "reply_type": reply.get("type") if reply else None,
-                "error_code": reply.get("error_code") if reply else None,
-                "recommendation_count": 0, "final": final}
+        after_result = (after or {}).get("result") or {}
+        provider_kept = (
+            after is not None and after.get("type") == "result"
+            and after_result.get("provider") == "fabledan"
+            and after_result.get("status") == "ready"
+        )
+        good = (
+            envelope_valid and positive_record is not None
+            and switched and reply is not None and reply.get("type") == "error"
+            and reply.get("error_code") == "REQUEST_KIND_UNSUPPORTED"
+            and reply.get("fatal") is False and provider_kept and final["exit"] == 0
+        )
+        return {
+            "status": "passed" if good else "failed",
+            "envelope_valid": envelope_valid,
+            "envelope_keys": sorted(envelope),
+            "positive_control": positive_record,
+            "positive_reply_type": positive.get("type") if positive else None,
+            "first_provider": first_meta.get("provider"),
+            "first_model_sha256": first_meta.get("model_sha256"),
+            "second_provider": second_meta.get("provider"),
+            "second_model_sha256": second_meta.get("model_sha256"),
+            "switched": switched,
+            "loaded_type": loaded.get("type") if loaded else None,
+            "reply_type": reply.get("type") if reply else None,
+            "error_code": reply.get("error_code") if reply else None,
+            "fatal": reply.get("fatal") if reply else None,
+            "expected_codes": ["REQUEST_KIND_UNSUPPORTED"],
+            "recommendation_count": 0,
+            "provider_kept_after_rejection": provider_kept,
+            "post_rejection_provider": after_result.get("provider"),
+            "final": final,
+        }
     finally:
         if session.process.poll() is None:
             session.process.kill()
@@ -729,6 +969,7 @@ def main() -> int:
             item.add_argument("--zip", type=Path, required=True)
         item.add_argument("--out", type=Path, required=True)
         item.set_defaults(func=function)
+        return item
 
     add("audit", cmd_audit)
     add("extract", cmd_extract, package=False, zip_path=True)
@@ -737,7 +978,10 @@ def main() -> int:
     add("gui", cmd_gui)
     add("fabledan", cmd_fabledan)
     add("marvel", cmd_marvel)
-    add("fixed", cmd_fixed)
+    fixed = add("fixed", cmd_fixed)
+    fixed.add_argument("--mode", choices=FIXED_MODE_CHOICES, required=True,
+                       help="run one bounded mode of the fixed 34/32/32 matrix")
+    add("merge-fixed", cmd_merge_fixed)
     add("negatives", cmd_negatives)
     add("cleanup", cmd_cleanup)
     finalize = sub.add_parser("finalize")

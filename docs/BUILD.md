@@ -123,14 +123,24 @@ py -3.12 -B scripts\run_final_local_gpu_acceptance.py smoke --package <extracted
 py -3.12 -B scripts\run_final_local_gpu_acceptance.py gui --package <extracted>\Guance --out <evidence>
 py -3.12 -B scripts\run_final_local_gpu_acceptance.py fabledan --package <extracted>\Guance --out <evidence>
 py -3.12 -B scripts\run_final_local_gpu_acceptance.py marvel --package <extracted>\Guance --out <evidence>
-py -3.12 -B scripts\run_final_local_gpu_acceptance.py fixed --package <extracted>\Guance --out <evidence>
+py -3.12 -B scripts\run_final_local_gpu_acceptance.py fixed --package <extracted>\Guance --out <evidence> --mode gpu_auto
+py -3.12 -B scripts\run_final_local_gpu_acceptance.py fixed --package <extracted>\Guance --out <evidence> --mode forced_cpu
+py -3.12 -B scripts\run_final_local_gpu_acceptance.py fixed --package <extracted>\Guance --out <evidence> --mode masked_cpu
+py -3.12 -B scripts\run_final_local_gpu_acceptance.py merge-fixed --package <extracted>\Guance --out <evidence>
 py -3.12 -B scripts\run_final_local_gpu_acceptance.py negatives --package <extracted>\Guance --out <evidence>
 py -3.12 -B scripts\run_final_local_gpu_acceptance.py cleanup --package <extracted>\Guance --out <evidence>
 ```
 
 `fixed` 通过包内 `Guance.exe --model-worker` 复用固定离线输入，分别验证 `auto→cuda:0`、
-强制 `cpu`、以及 `CUDA_VISIBLE_DEVICES=-1` 时 `auto→cpu`；`negatives` 验证缺失/篡改模型、
-错误 wire 契约和切换后旧请求 fail-closed。
+强制 `cpu`、以及 `CUDA_VISIBLE_DEVICES=-1` 时 `auto→cpu`。三种模式拆成独立有界子命令，
+每个模式写出 `fixed-mode-<mode>.json`、`fixed-input-*.json` 和逐请求进度
+`fixed-progress-<mode>.jsonl`（只含序号、耗时、状态，不含决策 payload）；`merge-fixed`
+再严格校验三份记录来自同一 EXE/模型/输入身份，且各自满足 34 provider-eligible、
+32 strict-eligible、32 推荐、2 strict-ineligible 拒绝、errors=0、model fallback=0、
+输入不变后才合并为 `fixed-matrix.json`。`negatives` 验证缺失/篡改模型（篡改 descriptor
+的期望错误集显式为 `ARTIFACT_SIZE_MISMATCH`）、错误 wire 契约，以及切换后旧请求
+以合法且与 payload 一致的 envelope 被明确拒绝（`REQUEST_KIND_UNSUPPORTED`，附切换前
+正控制和不换模型的复核）。
 
 ## 验证
 

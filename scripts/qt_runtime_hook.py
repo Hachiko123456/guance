@@ -9,12 +9,19 @@ import sys
 # so enforce the same encoding here before any application import. Without this,
 # non-ASCII candidate labels are emitted as GBK and the strict UTF-8 client
 # rejects the result.
-for _stream in (sys.stdout, sys.stderr):
+#
+# stdin needs the same treatment: the parent writes UTF-8 JSONL, and a frozen
+# worker that decodes it with the ANSI code page turns a valid request (for
+# example a load source containing a Chinese directory name) into
+# PROTOCOL_INVALID.  A plain (non-worker) GUI launch may expose an empty or
+# ``None`` stdin, so both cases must stay harmless.
+for _stream in (sys.stdout, sys.stderr, sys.stdin):
     if _stream is not None and hasattr(_stream, "reconfigure"):
         try:
             _stream.reconfigure(encoding="utf-8", errors="strict")
         except (LookupError, OSError, ValueError):
             pass
+del _stream
 
 base = Path(getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent))
 paths = [base, base / "PySide6", base / "shiboken6"]

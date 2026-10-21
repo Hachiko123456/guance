@@ -105,6 +105,89 @@ def test_runtime_hook_appends_only_present_vendored_site_packages(tmp_path):
     assert "HOOK_OK" in result.stdout
 
 
+# A frozen windowed worker inherits the ANSI code page for stdio.  This driver is
+# executed as a real child process so the regression exercises the hook's effect
+# on the actual ``sys.stdin`` text wrapper instead of asserting source text.
+_STDIO_DRIVER = r'''
+import json
+import sys
+
+hook, result_path, mode = sys.argv[1], sys.argv[2], sys.argv[3]
+if mode == "gui-none-stdin":
+    sys.stdin = None
+exec(compile(open(hook, encoding="utf-8").read(), hook, "exec"))
+payload = json.loads(sys.argv[4])
+record = {"request_id": None, "text": None}
+if sys.stdin is not None:
+    line = sys.stdin.readline()
+    parsed = json.loads(line)
+    record = {"request_id": parsed["request_id"], "text": parsed["text"]}
+with open(result_path, "w", encoding="utf-8") as stream:
+    json.dump({
+        "stdin_encoding": getattr(sys.stdin, "encoding", None),
+        "stdout_encoding": sys.stdout.encoding,
+        "stderr_encoding": sys.stderr.encoding,
+        "record": record,
+    }, stream, ensure_ascii=False)
+print(payload["text"], flush=True)
+print(payload["text"], file=sys.stderr, flush=True)
+'''
+
+
+def _run_stdio_driver(tmp_path, *, mode: str, payload: dict[str, str], stdin_bytes: bytes):
+    driver = tmp_path / "stdio_driver.py"
+    driver.write_text(_STDIO_DRIVER, encoding="utf-8")
+    result_path = tmp_path / "stdio_result.json"
+    env = os.environ.copy()
+    for name in ("PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP", "PYTHONUSERBASE"):
+        env.pop(name, None)
+    # Deterministic stand-in for a frozen windowed process: stdio defaults to the
+    # ANSI code page unless the runtime hook corrects it.
+    env["PYTHONIOENCODING"] = "cp936"
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    completed = subprocess.run(
+        [sys.executable, "-B", str(driver), str(HOOK), str(result_path), mode,
+         json.dumps(payload, ensure_ascii=False)],
+        input=stdin_bytes, capture_output=True, timeout=120, env=env,
+        cwd=str(tmp_path),
+    )
+    data = json.loads(result_path.read_text(encoding="utf-8")) if result_path.is_file() else {}
+    return completed, data
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows ANSI stdio default")
+def test_runtime_hook_decodes_utf8_worker_stdin_strictly(tmp_path):
+    """A UTF-8 JSONL request with Chinese text must decode intact on stdin.
+
+    The old hook only reconfigured stdout/stderr, so the child decoded the UTF-8
+    bytes as cp936: the JSON either raised UnicodeDecodeError or produced
+    mojibake, and the exact-text comparison below fails either way.
+    """
+    payload = {"request_id": "回归-请求", "text": "中文 空格 路径 东风"}
+    line = (json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8")
+    completed, data = _run_stdio_driver(tmp_path, mode="worker", payload=payload,
+                                        stdin_bytes=line)
+    assert completed.returncode == 0, completed.stderr.decode("utf-8", "replace")
+    assert data["record"] == {"request_id": payload["request_id"], "text": payload["text"]}
+    for key in ("stdin_encoding", "stdout_encoding", "stderr_encoding"):
+        assert data[key].lower().replace("_", "-") == "utf-8", (key, data)
+    # stdout/stderr stay UTF-8: strict decoding of the captured bytes must succeed.
+    assert completed.stdout.decode("utf-8").strip() == payload["text"]
+    assert completed.stderr.decode("utf-8").strip() == payload["text"]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows ANSI stdio default")
+def test_runtime_hook_tolerates_absent_stdin_in_gui_launch(tmp_path):
+    """A normal GUI launch exposes no stdin stream; the hook must stay harmless."""
+    payload = {"request_id": "gui", "text": "界面 中文"}
+    completed, data = _run_stdio_driver(tmp_path, mode="gui-none-stdin", payload=payload,
+                                        stdin_bytes=b"")
+    assert completed.returncode == 0, completed.stderr.decode("utf-8", "replace")
+    assert data["record"] == {"request_id": None, "text": None}
+    assert data["stdout_encoding"].lower().replace("_", "-") == "utf-8"
+    assert completed.stdout.decode("utf-8").strip() == payload["text"]
+
+
 def _marvel_env(monkeypatch, tmp_path, *, checkpoint_hash: str, source_files: int = 120):
     site = tmp_path / "site"
     (site / "torch").mkdir(parents=True)
