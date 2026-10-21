@@ -353,3 +353,84 @@ def test_legacy_npz_behavior_is_explicit_fabledan_compatibility(npz_path, manife
     with pytest.raises(ModelBackendError) as exc:
         legacy_npz_bundle(manifest_path)
     assert exc.value.code == "MODEL_SOURCE_INVALID"
+
+
+def _catalog_v2_data(manifest_data: dict) -> dict:
+    data = dict(manifest_data)
+    data.update({
+        "schema_version": 2, "model_id": "fabledan-default", "artifact_bytes": 4096,
+        "runtime_contract": "fabledan.numpy.v1", "classification": "legacy",
+        "readiness": {"experimental": False, "production_ready": False, "strength_claim": False},
+    })
+    return data
+
+
+def test_catalog_v2_manifest_round_trip_and_identity(manifest_data):
+    manifest = ModelManifest.from_dict(_catalog_v2_data(manifest_data))
+    assert manifest.is_catalog_manifest is True
+    assert manifest.model_id == "fabledan-default"
+    assert manifest.artifact_bytes == 4096
+    assert manifest.runtime_contract == "fabledan.numpy.v1"
+    assert manifest.classification == "legacy"
+    assert dict(manifest.readiness) == {"experimental": False, "production_ready": False,
+                                        "strength_claim": False}
+    assert ModelManifest.from_dict(manifest.to_dict()) == manifest
+    assert "model_id" in manifest.to_dict()
+    v1 = ModelManifest.from_dict(manifest_data)
+    assert v1.is_catalog_manifest is False
+    assert "model_id" not in v1.to_dict()
+
+
+@pytest.mark.parametrize("mutation", [
+    {"model_id": "bad id"}, {"model_id": 7}, {"model_id": ""},
+    {"artifact_bytes": True}, {"artifact_bytes": 0}, {"artifact_bytes": -1},
+    {"artifact_bytes": "7"}, {"artifact_bytes": 2**63},
+    {"runtime_contract": "bad contract"}, {"runtime_contract": 7},
+    {"classification": "top_secret"}, {"classification": 7},
+    {"readiness": {}}, {"readiness": {"production_ready": True}},
+    {"readiness": {"experimental": False, "production_ready": False,
+                   "strength_claim": False, "extra": False}},
+    {"readiness": {"experimental": 0, "production_ready": False, "strength_claim": False}},
+    {"readiness": ["experimental"]},
+    {"unknown_v2_key": 1},
+])
+def test_catalog_v2_manifest_invalid_fields_fail_closed(manifest_data, mutation):
+    data = _catalog_v2_data(manifest_data)
+    data.update(mutation)
+    with pytest.raises(ModelBackendError) as exc:
+        ModelManifest.from_dict(data)
+    assert exc.value.code == "MANIFEST_INVALID"
+
+
+@pytest.mark.parametrize("field", sorted({
+    "model_id", "artifact_bytes", "runtime_contract", "classification", "readiness"}))
+def test_catalog_v2_manifest_missing_fields_fail_closed(manifest_data, field):
+    data = _catalog_v2_data(manifest_data)
+    del data[field]
+    with pytest.raises(ModelBackendError) as exc:
+        ModelManifest.from_dict(data)
+    assert exc.value.code == "MANIFEST_INVALID"
+
+
+def test_v1_manifest_may_not_declare_v2_fields(manifest_data):
+    data = dict(manifest_data)
+    data["model_id"] = "smuggled"
+    with pytest.raises(ModelBackendError) as exc:
+        ModelManifest.from_dict(data)
+    assert exc.value.code == "MANIFEST_INVALID"
+
+
+def test_catalog_v2_artifact_bytes_enforced_at_verify(npz_path, manifest_path, manifest_data):
+    import hashlib
+    digest = hashlib.sha256(npz_path.read_bytes()).hexdigest()
+    data = _catalog_v2_data(manifest_data)
+    data["artifact_sha256"] = digest
+    data["artifact_bytes"] = npz_path.stat().st_size
+    manifest_path.write_text(json.dumps(data, sort_keys=True), encoding="utf-8")
+    bundle = load_bundle(manifest_path.parent)
+    assert bundle.manifest.artifact_bytes == npz_path.stat().st_size
+    data["artifact_bytes"] = npz_path.stat().st_size + 1
+    manifest_path.write_text(json.dumps(data, sort_keys=True), encoding="utf-8")
+    with pytest.raises(ModelBackendError) as exc:
+        load_bundle(manifest_path.parent)
+    assert exc.value.code == "ARTIFACT_SIZE_MISMATCH"

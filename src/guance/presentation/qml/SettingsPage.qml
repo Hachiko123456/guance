@@ -86,26 +86,102 @@ ScrollView {
         return enabled.length ? enabled.join("、") : "未声明"
     }
 
+    function catalogProblemsText() {
+        var problems = viewModel.catalogProblems || []
+        var parts = []
+        for (var index = 0; index < problems.length && index < 3; index++) {
+            var problem = problems[index]
+            parts.push((problem.directory !== "" ? problem.directory : "目录") + "：" + problem.code)
+        }
+        return parts.join("；")
+    }
+
     ColumnLayout {
         width: page.availableWidth
         spacing: 18
         Text { text: "设置"; color: Theme.ink; font.family: Theme.family; font.pixelSize: 26; font.weight: Font.DemiBold }
         Text { text: "把复杂设置留在这里，助手页只保留对局需要的信息。"; color: Theme.muted; font.family: Theme.family; font.pixelSize: 13 }
         Rectangle {
-            Layout.fillWidth: true; implicitHeight: 306; radius: 14; color: Theme.panel; border.color: Theme.line
+            Layout.fillWidth: true; implicitHeight: 326; radius: 14; color: Theme.panel; border.color: Theme.line
             ColumnLayout { anchors.fill: parent; anchors.margins: 20; spacing: 7
                 Text { text: "模型"; color: Theme.ink; font.family: Theme.family; font.pixelSize: 15; font.bold: true }
                 Text { text: viewModel.modelSummary; color: Theme.muted; font.family: Theme.family; font.pixelSize: 12; Layout.fillWidth: true; elide: Text.ElideRight }
                 Text { objectName: "modelStatusField"; text: "状态：" + modelMetadataValue("status", viewModel.modelState); color: Theme.faint; font.family: Theme.family; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight }
                 Text { objectName: "modelProviderField"; text: "提供方：" + modelMetadataValue("provider", "未声明") + "    后端：" + modelMetadataValue("backend", "未声明"); color: Theme.faint; font.family: Theme.family; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight }
-                Text { objectName: "modelRuntimeField"; text: "运行时：" + modelMetadataValue("runtime", "未声明") + " " + modelMetadataValue("runtime_version", "") + "    版本：" + modelMetadataValue("model_version", "未声明"); color: Theme.faint; font.family: Theme.family; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight }
+                Text { objectName: "modelRuntimeField"; text: "运行时：" + modelMetadataValue("runtime", "未声明") + " " + modelMetadataValue("runtime_version", "") + "    契约：" + modelMetadataValue("runtime_contract", "未声明") + "    版本：" + modelMetadataValue("model_version", "未声明") + "    迭代：" + modelMetadataValue("iteration", "未声明"); color: Theme.faint; font.family: Theme.family; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight }
+                Text { objectName: "modelDeviceField"; visible: text.length > 0; text: modelMetadataValue("device_summary", ""); color: Theme.faint; font.family: Theme.family; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight }
                 Text { objectName: "modelCapabilitiesField"; text: "能力：" + modelCapabilitiesText(); color: Theme.faint; font.family: Theme.family; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight }
-                Text { objectName: "modelExperimentalField"; text: "类型：" + modelBooleanLabel("experimental", "实验性", "常规") + " / " + modelMetadataValue("classification", "未声明") + "    生产就绪：" + modelBooleanLabel("production_ready", "是", "否"); color: Theme.faint; font.family: Theme.family; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight }
+                Text { objectName: "modelExperimentalField"; text: "类型：" + modelBooleanLabel("experimental", "实验性", "常规") + " / " + modelMetadataValue("classification", "未声明") + "    生产就绪：" + modelBooleanLabel("production_ready", "是", "否") + "    强度声明：" + modelBooleanLabel("strength_claim", "是", "否"); color: Theme.faint; font.family: Theme.family; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight }
                 Text { objectName: "modelEvaluationField"; text: "正式评估：" + modelMetadataValue("formal_evaluation_status", "未声明") + "    Champion：" + modelMetadataValue("champion_status", "未声明"); color: Theme.faint; font.family: Theme.family; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight }
                 Text { objectName: "modelScoreField"; text: "分数：" + (modelMetadataValue("score_kind", "未声明").indexOf("policy_path") >= 0 ? "策略/路径分数（非胜率）" : modelMetadataValue("score_kind", "未声明")); color: Theme.faint; font.family: Theme.family; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight }
-                Text { objectName: "modelFingerprintField"; text: "模型指纹：" + modelMetadataValue("fingerprint", "未声明"); color: Theme.faint; font.family: Theme.family; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight }
+                Text { objectName: "modelFingerprintField"; text: "模型指纹：" + modelMetadataValue("fingerprint", "未声明") + "    制品/包指纹：" + modelMetadataValue("bundle_fingerprint", "未声明"); color: Theme.faint; font.family: Theme.family; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight }
                 Text { objectName: "modelDeploymentFingerprintField"; text: "部署指纹：" + modelMetadataValue("deployment_fingerprint", "未声明"); color: Theme.faint; font.family: Theme.family; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight }
                 ActionButton { objectName: "importModelButton"; text: "导入模型"; subtle: true; onClicked: modelDialog.open() }
+            }
+        }
+        Rectangle {
+            Layout.fillWidth: true; implicitHeight: 232; radius: 14; color: Theme.panel; border.color: Theme.line
+            ColumnLayout { anchors.fill: parent; anchors.margins: 20; spacing: 6
+                RowLayout {
+                    Layout.fillWidth: true
+                    Text { text: "模型目录"; color: Theme.ink; font.family: Theme.family; font.pixelSize: 15; font.bold: true; Layout.fillWidth: true }
+                    ActionButton { objectName: "catalogRefreshButton"; text: "刷新"; subtle: true; onClicked: viewModel.request_catalog_refresh() }
+                }
+                Text {
+                    objectName: "activeModelField"
+                    text: "当前选择：" + (viewModel.activeModelSummary !== "" ? viewModel.activeModelSummary : "未选择（推荐保持不可用）")
+                    color: Theme.muted; font.family: Theme.family; font.pixelSize: 12
+                    Layout.fillWidth: true; elide: Text.ElideRight
+                }
+                Text {
+                    objectName: "catalogEmptyField"
+                    visible: viewModel.catalogEntries.length === 0
+                    text: "未发现模型包。把完整模型包（manifest + artifact + SHA256SUMS）复制到本机模型目录后刷新。"
+                    color: Theme.faint; font.family: Theme.family; font.pixelSize: 11
+                    Layout.fillWidth: true; wrapMode: Text.WordWrap
+                }
+                ListView {
+                    objectName: "catalogList"
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    clip: true
+                    visible: viewModel.catalogEntries.length > 0
+                    model: viewModel.catalogEntries
+                    delegate: RowLayout {
+                        width: ListView.view ? ListView.view.width : 0
+                        spacing: 8
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 1
+                            Text {
+                                text: modelData.model_id + "  ·  " + modelData.provider + " / " + modelData.classification
+                                color: Theme.ink; font.family: Theme.family; font.pixelSize: 12
+                                elide: Text.ElideRight; Layout.fillWidth: true
+                            }
+                            Text {
+                                text: (modelData.experimental ? "实验性" : "常规")
+                                      + " · 生产就绪：" + (modelData.production_ready ? "是" : "否")
+                                      + (modelData.strength_claim ? " · 强度声明：是" : "")
+                                      + (modelData.fingerprint !== "" ? " · " + modelData.fingerprint : "")
+                                color: Theme.faint; font.family: Theme.family; font.pixelSize: 10
+                                elide: Text.ElideRight; Layout.fillWidth: true
+                            }
+                        }
+                        ActionButton {
+                            objectName: "catalogSelectButton-" + modelData.model_id
+                            text: viewModel.activeModelId === modelData.model_id ? "已选择" : "选择"
+                            subtle: true
+                            onClicked: viewModel.request_catalog_model(modelData.model_id)
+                        }
+                    }
+                }
+                Text {
+                    objectName: "catalogProblemsField"
+                    visible: viewModel.catalogProblems.length > 0
+                    text: "发现 " + viewModel.catalogProblems.length + " 个不可用条目：" + catalogProblemsText()
+                    color: Theme.amber; font.family: Theme.family; font.pixelSize: 10
+                    Layout.fillWidth: true; elide: Text.ElideRight
+                }
             }
         }
         Rectangle {

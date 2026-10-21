@@ -11,19 +11,23 @@ from __future__ import annotations
 from dataclasses import replace
 import importlib
 import math
+import re
 from time import perf_counter
 from typing import Any
 
 from guance.contracts import ModelMetadata
 from ..errors import ModelBackendError
 from ..manifest import ModelBundle
-from .checkpoint import canonical_json_hash, load_checkpoint, verified_artifact_bytes
-from .identity import CONFIG_SHA256, CheckpointIdentity
+from .checkpoint import (
+    CheckpointExpectation, canonical_json_hash, load_checkpoint, verified_artifact_bytes,
+)
+from .identity import CheckpointIdentity
 
 _ROLLOUT_KEYS = frozenset({
     "num_steps", "player_ids", "obs_tokens", "obs_channels", "avail_tokens", "avail_weights",
 })
 _MAX_DEMO_STEPS = 32
+_DEVICE_NAME = re.compile(r"(?:cpu|cuda(?::(?:0|[1-9][0-9]{0,2}))?)\Z")
 
 
 def _deadline(timeout_seconds: float | None) -> float | None:
@@ -42,7 +46,7 @@ def _check_deadline(deadline: float | None) -> None:
 
 
 class MarvelV2DemoRuntime:
-    """Real pinned weights, but isolated from every production factory.
+    """Real weights via a bundle-declared expectation, isolated from every factory.
 
     load(same bundle) is idempotent with integrity revalidation; reload always
     drops the old model first. Any operation failure drops model references.
@@ -50,10 +54,22 @@ class MarvelV2DemoRuntime:
     """
 
     def __init__(self, *, device: str = "cpu") -> None:
-        if device != "cpu":
+        if not isinstance(device, str) or not _DEVICE_NAME.fullmatch(device):
             raise ModelBackendError("RUNTIME_UNSUPPORTED")
+        self._device_name = "cuda:0" if device == "cuda" else device
         self._closed = False
         self._clear()
+
+    @property
+    def device_name(self) -> str:
+        """The device this runtime was constructed for; stable for its lifecycle."""
+        return self._device_name
+
+    @property
+    def device(self) -> Any:
+        if self._torch is None:
+            raise ModelBackendError("MODEL_NOT_LOADED")
+        return self._torch.device(self._device_name)
 
     def _clear(self) -> None:
         self._model: Any = None
@@ -81,12 +97,13 @@ class MarvelV2DemoRuntime:
         if self._closed:
             raise ModelBackendError("MODEL_CLOSED")
 
-    def load(self, bundle: ModelBundle, *, timeout_seconds: float | None = None) -> CheckpointIdentity:
+    def load(self, bundle: ModelBundle, expectation: CheckpointExpectation, *,
+             timeout_seconds: float | None = None) -> CheckpointIdentity:
         self._ensure_open()
         if self._model is not None and bundle == self._bundle:
             try:
                 deadline = _deadline(timeout_seconds)
-                verified_artifact_bytes(bundle)
+                verified_artifact_bytes(bundle, expectation)
                 _check_deadline(deadline)
                 return self._metadata
             except ModelBackendError:
@@ -95,14 +112,15 @@ class MarvelV2DemoRuntime:
             except Exception:
                 self._clear()
                 raise ModelBackendError("MODEL_LOAD_FAILED") from None
-        return self.reload(bundle, timeout_seconds=timeout_seconds)
+        return self.reload(bundle, expectation, timeout_seconds=timeout_seconds)
 
-    def reload(self, bundle: ModelBundle, *, timeout_seconds: float | None = None) -> CheckpointIdentity:
+    def reload(self, bundle: ModelBundle, expectation: CheckpointExpectation, *,
+               timeout_seconds: float | None = None) -> CheckpointIdentity:
         self._ensure_open()
         self._clear()
         try:
             deadline = _deadline(timeout_seconds)
-            checkpoint = load_checkpoint(bundle)
+            checkpoint = load_checkpoint(bundle, expectation)
             _check_deadline(deadline)
             try:
                 torch = importlib.import_module("torch")
@@ -111,18 +129,21 @@ class MarvelV2DemoRuntime:
             except Exception:
                 raise ModelBackendError("MODEL_UNAVAILABLE") from None
             cfg = config_module.deserialize_train_config(checkpoint.resolved_config)
-            if cfg is None or canonical_json_hash(cfg.to_dict()) != CONFIG_SHA256:
+            if (cfg is None
+                    or canonical_json_hash(cfg.to_dict()) != expectation.resolved_config_hash):
                 raise ModelBackendError("MODEL_LOAD_FAILED")
             original_device = cfg.device
-            cfg.device = "cpu"  # The ONLY resolved-config override permitted by this demo.
-            model = model_module.Agent(cfg, enable_value_head=True).to("cpu")
+            # The only resolved-config override permitted: the selected device.
+            cfg.device = self._device_name
+            model = model_module.Agent(cfg, enable_value_head=True).to(self._device_name)
             result = model.load_state_dict(checkpoint.state_dict, strict=True)
             if result.missing_keys or result.unexpected_keys:
                 raise ModelBackendError("MODEL_LOAD_FAILED")
             model.eval()
+            self._assert_model_device(torch, model)
             reconstructed = cfg.to_dict()
             reconstructed["device"] = original_device
-            if canonical_json_hash(reconstructed) != CONFIG_SHA256:
+            if canonical_json_hash(reconstructed) != expectation.resolved_config_hash:
                 raise ModelBackendError("MODEL_LOAD_FAILED")
             _check_deadline(deadline)
             self._model, self._torch, self._tensor_dict = model, torch, model_module.TensorDict
@@ -135,6 +156,39 @@ class MarvelV2DemoRuntime:
         except Exception:
             self._clear()
             raise ModelBackendError("MODEL_LOAD_FAILED") from None
+
+    def _assert_model_device(self, torch: Any, model: Any) -> None:
+        selected = torch.device(self._device_name)
+        for tensor in list(model.parameters()) + list(model.buffers()):
+            if tensor.device != selected:
+                raise ModelBackendError("MODEL_INFERENCE_FAILED")
+
+    def device_evidence(self) -> dict[str, Any]:
+        """Bounded, public-safe evidence that the real model/cache live on the selected device."""
+        self._ensure_open()
+        if self._model is None or self._torch is None:
+            raise ModelBackendError("MODEL_NOT_LOADED")
+        torch = self._torch
+        selected = torch.device(self._device_name)
+        parameters = list(self._model.parameters())
+        buffers = list(self._model.buffers())
+        if any(tensor.device != selected for tensor in parameters + buffers):
+            raise ModelBackendError("MODEL_INFERENCE_FAILED")
+        cache = self._new_kv_cache(max_ctx_len=1)
+        try:
+            if cache.keys.device != selected or cache.values.device != selected:
+                raise ModelBackendError("MODEL_INFERENCE_FAILED")
+            cache_device = str(cache.keys.device)
+        finally:
+            del cache
+        return {
+            "selected_device": self._device_name,
+            "parameter_count": len(parameters),
+            "parameter_device": str(parameters[0].device) if parameters else "",
+            "buffer_count": len(buffers),
+            "buffer_device": str(buffers[0].device) if buffers else "",
+            "cache_device": cache_device,
+        }
 
     def mark_experimental_deployment_verified(self) -> CheckpointIdentity:
         """Promote the loaded real artifact after the Phase 6 deployment gate.
@@ -153,11 +207,12 @@ class MarvelV2DemoRuntime:
 
     def _rollout(self, fields: dict[str, Any]) -> Any:
         torch = self._torch
+        selected = torch.device(self._device_name)
         def require(condition: bool) -> None:
             if not condition:
                 raise ModelBackendError("MODEL_INPUT_INVALID")
         require(type(fields) is dict and fields.keys() == _ROLLOUT_KEYS)
-        require(all(type(tensor) is torch.Tensor and tensor.device.type == "cpu"
+        require(all(type(tensor) is torch.Tensor and tensor.device == selected
                     and tensor.layout == torch.strided for tensor in fields.values()))
         players = fields["player_ids"]
         require(players.ndim == 2 and players.shape[0] == 1)
@@ -183,7 +238,8 @@ class MarvelV2DemoRuntime:
         weights = fields["avail_weights"]
         require(bool(torch.isfinite(weights).all() and (weights >= 0).all()))
         require(bool((weights.sum(dim=-1) > 0).all()))
-        return self._tensor_dict({k: v.clone() for k, v in fields.items()}, batch_size=[1], device="cpu")
+        return self._tensor_dict({k: v.clone() for k, v in fields.items()}, batch_size=[1],
+                                 device=self._device_name)
 
     def forward_synthetic_cached(self, history_fields: dict[str, Any],
                                  next_fields: dict[str, Any], *,
@@ -199,19 +255,8 @@ class MarvelV2DemoRuntime:
             raise ModelBackendError("MODEL_NOT_LOADED")
         try:
             deadline = _deadline(timeout_seconds)
-            cache_module = importlib.import_module("guandan_marvel.model.cache")
             torch = self._torch
-            config = self._model.decoder.config
-            kv_heads = config.num_key_value_heads or config.num_attention_heads
-            head_dim = config.hidden_size // config.num_attention_heads
-            dtype = next(self._model.parameters()).dtype
-            cache = cache_module.KVCache(
-                self._model.decoder_n_layers, 4,
-                max_ctx_len=int(self._model.max_game_horizon),
-                num_heads=kv_heads, head_dim=head_dim,
-                value_heads=kv_heads, value_head_dim=head_dim,
-                dtype=dtype, device="cpu",
-            )
+            cache = self._new_kv_cache()
             history = self._rollout(history_fields)
             next_rollout = self._rollout(next_fields)
             if int(next_rollout["num_steps"][0]) != 1:
@@ -240,7 +285,7 @@ class MarvelV2DemoRuntime:
             self._clear()
             raise ModelBackendError("MODEL_INFERENCE_FAILED") from None
 
-    def _new_kv_cache(self) -> Any:
+    def _new_kv_cache(self, *, max_ctx_len: int | None = None) -> Any:
         cache_module = importlib.import_module("guandan_marvel.model.cache")
         config = self._model.decoder.config
         kv_heads = config.num_key_value_heads or config.num_attention_heads
@@ -248,10 +293,10 @@ class MarvelV2DemoRuntime:
         dtype = next(self._model.parameters()).dtype
         return cache_module.KVCache(
             self._model.decoder_n_layers, 4,
-            max_ctx_len=int(self._model.max_game_horizon),
+            max_ctx_len=int(self._model.max_game_horizon if max_ctx_len is None else max_ctx_len),
             num_heads=kv_heads, head_dim=head_dim,
             value_heads=kv_heads, value_head_dim=head_dim,
-            dtype=dtype, device="cpu",
+            dtype=dtype, device=self._device_name,
         )
 
     @staticmethod

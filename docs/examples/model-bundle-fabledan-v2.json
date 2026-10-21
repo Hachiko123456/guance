@@ -1,0 +1,33 @@
+{
+  "schema_version": 2,
+  "model_id": "fabledan-default",
+  "provider": "fabledan",
+  "backend": "numpy",
+  "runtime": "numpy",
+  "runtime_contract": "fabledan.numpy.v1",
+  "artifact": "artifact.npz",
+  "artifact_format": "npz",
+  "artifact_sha256": "86570527c988026f74e21e84bf2f50876ede1d38c962d196e444115cf3571310",
+  "artifact_bytes": 16076952,
+  "input_contract": "CanonicalPublicGameView.v1",
+  "output_contract": "CanonicalAdviceResult.v1",
+  "model_version": "legacy",
+  "training_version": "legacy-unknown",
+  "rules_version": "tencent_daguandan.v1",
+  "action_version": "public-action.v1",
+  "environment_version": "public-play.v1",
+  "encoding_version": "fabledan.v1",
+  "algorithm": "fabledan-q",
+  "architecture": "FableDanNet",
+  "classification": "legacy",
+  "readiness": {
+    "experimental": false,
+    "production_ready": false,
+    "strength_claim": false
+  },
+  "capabilities": {
+    "recommend": true,
+    "top_n": true,
+    "complete_action": true
+  }
+}

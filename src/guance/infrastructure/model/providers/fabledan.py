@@ -14,6 +14,26 @@ from ..errors import ModelBackendError
 from ..factory import AbstractProviderFactory
 from ..manifest import ModelBundle, ModelManifest
 
+FABLEDAN_RUNTIME_CONTRACT = "fabledan.numpy.v1"
+# Discovery claim contract: a FableDan-family bundle may not self-report
+# production/strength claims without an evaluated identity; only the legacy
+# vendor model and explicitly evaluation-only packages are acceptable today.
+FABLEDAN_ALLOWED_CLASSIFICATIONS = frozenset({"legacy", "experimental", "evaluation_only"})
+
+
+def validate_fabledan_claims(manifest: ModelManifest) -> None:
+    classification = manifest.classification
+    readiness = manifest.readiness
+    if classification is None and readiness is None:
+        return  # schema 1 direct selection carries no claim fields
+    if classification not in FABLEDAN_ALLOWED_CLASSIFICATIONS or readiness is None:
+        raise ModelBackendError("CLAIM_UNSUPPORTED")
+    expected_experimental = classification != "legacy"
+    if (readiness.get("production_ready") is not False
+            or readiness.get("strength_claim") is not False
+            or readiness.get("experimental") is not expected_experimental):
+        raise ModelBackendError("CLAIM_UNSUPPORTED")
+
 
 class FableDanObservationAdapter:
     def adapt(self, view: CanonicalPublicGameView) -> GameObservation:
@@ -54,7 +74,9 @@ class FableDanModelAdapter:
             self._loaded = True
         manifest = self.bundle.manifest
         return ModelMetadata(status="loaded", provider=manifest.provider, backend=manifest.backend,
-                runtime=manifest.runtime, model_version=manifest.model_version,
+                runtime=manifest.runtime, runtime_version="",
+                runtime_contract=(manifest.runtime_contract or FABLEDAN_RUNTIME_CONTRACT),
+                model_version=manifest.model_version, iteration=0,
                 model_sha256=manifest.artifact_sha256,
                 bundle_fingerprint=manifest.artifact_sha256, legacy=self.bundle.legacy,
                 score_kind="fabledan_q", test_only=False,
@@ -75,6 +97,10 @@ class FableDanModelAdapter:
         validate_advice_for_view(view, canonical)
         return canonical
 
+    def recommend_confirmed(self, decision, request_id: str) -> CanonicalAdviceResult:
+        # The FableDan public-view family never consumes confirmed-decision DTOs.
+        raise ModelBackendError("REQUEST_KIND_UNSUPPORTED")
+
     def close(self) -> None:
         self._closed = True
         self._loaded = False
@@ -90,6 +116,10 @@ class FableDanProvider(AbstractProviderFactory):
         if (manifest.input_contract not in PUBLIC_GAME_CONTRACT_ALIASES
                 or manifest.output_contract not in ADVICE_CONTRACT_ALIASES):
             raise ModelBackendError("CONTRACT_UNSUPPORTED")
+        if (manifest.runtime_contract is not None
+                and manifest.runtime_contract != FABLEDAN_RUNTIME_CONTRACT):
+            raise ModelBackendError("RUNTIME_UNSUPPORTED")
+        validate_fabledan_claims(manifest)
         expected = {"artifact_format": "npz", "rules_version": PUBLIC_RULESET,
                     "action_version": "public-action.v1", "environment_version": "public-play.v1",
                     "encoding_version": "fabledan.v1", "algorithm": "fabledan-q",
@@ -100,10 +130,12 @@ class FableDanProvider(AbstractProviderFactory):
     def create_observation_adapter(self) -> FableDanObservationAdapter:
         return FableDanObservationAdapter()
 
-    def create_runtime(self, bundle: ModelBundle) -> Any:
+    def create_runtime(self, bundle: ModelBundle, *,
+                       requested_device: str = "auto") -> Any:
         from ..advisor import FableDanAdvisor
         return FableDanAdvisor(bundle.artifact_path)
 
-    def create(self, bundle: ModelBundle) -> FableDanModelAdapter:
+    def create(self, bundle: ModelBundle, *,
+               requested_device: str = "auto") -> FableDanModelAdapter:
         self.validate(bundle.manifest)
         return FableDanModelAdapter(bundle, self.create_runtime(bundle), self.create_observation_adapter())

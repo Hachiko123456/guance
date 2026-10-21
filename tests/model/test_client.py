@@ -1,4 +1,4 @@
-"""MBA-P0-004, MBA-P1-005: latest-only queue, identities, timeout/restart/close."""
+﻿"""MBA-P0-004, MBA-P1-005: latest-only queue, identities, timeout/restart/close."""
 from dataclasses import replace
 import threading
 import time
@@ -6,10 +6,16 @@ from types import SimpleNamespace
 
 import pytest
 
-from guance.contracts import AdviceCandidate, CanonicalAdviceResult
+from guance.contracts import (AdviceCandidate, CanonicalAdviceResult, PublicRecommendationRequest,
+                               RequestIdentity)
 from guance.infrastructure.model.client import InferenceClient
 from guance.infrastructure.model.errors import ModelBackendError
 from guance.infrastructure.model.worker import envelope
+
+
+def _submit(client, view, **kwargs):
+    return client.submit(PublicRecommendationRequest(
+        RequestIdentity("", view.session_id, view.game_id, view.state_version), view), **kwargs)
 
 
 def wait_until(predicate, timeout=4):
@@ -51,24 +57,24 @@ def test_latest_only_queue_before_start_and_close_is_terminal(tmp_path, view, mo
     results, statuses = [], []
     client = ControlledClient(tmp_path, results, statuses)
     monkeypatch.setattr(client, "start", lambda: None)
-    client.submit(view)
+    _submit(client, view)
     newer = replace(view, state_version=8)
-    client.submit(newer)
+    _submit(client, newer)
     assert client._requests.qsize() == 1
-    assert client._requests.get_nowait()[1] == newer
+    assert client._requests.get_nowait()[0].view == newer
     client.close()
     with pytest.raises(ModelBackendError):
-        client.submit(view)
+        _submit(client, view)
 
 
 def test_newest_state_replaces_pending_and_drops_old_result(tmp_path, view):
     results, statuses = [], []
     client = ControlledClient(tmp_path, results, statuses)
     try:
-        client.submit(view)
+        _submit(client, view)
         wait_until(lambda: len(client.sent) == 1)
-        client.submit(replace(view, state_version=8))
-        client.submit(replace(view, state_version=9))
+        _submit(client, replace(view, state_version=8))
+        _submit(client, replace(view, state_version=9))
         client._responses.put(reply(client.sent[0]))
         wait_until(lambda: len(client.sent) == 2)
         assert client.sent[1]["state_version"] == 9
@@ -85,10 +91,10 @@ def test_same_state_key_new_request_drops_old_result(tmp_path, view):
     results, statuses = [], []
     client = ControlledClient(tmp_path, results, statuses)
     try:
-        client.submit(view)
+        _submit(client, view)
         wait_until(lambda: len(client.sent) == 1)
         first = client.sent[0]
-        client.submit(view)
+        _submit(client, view)
         client._responses.put(reply(first))
         wait_until(lambda: len(client.sent) == 2)
         assert client.sent[1]["request_id"] != first["request_id"]
@@ -106,10 +112,10 @@ def test_invalidate_and_resubmit_same_key_cannot_resurrect_old_result(tmp_path, 
     results, statuses = [], []
     client = ControlledClient(tmp_path, results, statuses)
     try:
-        client.submit(view)
+        _submit(client, view)
         wait_until(lambda: len(client.sent) == 1)
         client.invalidate()
-        client.submit(view)
+        _submit(client, view)
         client._responses.put(reply(client.sent[0]))
         wait_until(lambda: len(client.sent) == 2)
         assert not results
@@ -128,7 +134,7 @@ def test_every_response_identity_is_verified(tmp_path, view, field, location):
     results, statuses = [], []
     client = ControlledClient(tmp_path, results, statuses)
     try:
-        client.submit(view)
+        _submit(client, view)
         wait_until(lambda: bool(client.sent))
         message = reply(client.sent[0])
         target = message if location == "envelope" else message["result"]
@@ -145,10 +151,10 @@ def test_timeout_restarts_same_source_on_next_observation(tmp_path, view):
     results, statuses = [], []
     client = ControlledClient(tmp_path, results, statuses)
     try:
-        client.submit(view)
+        _submit(client, view)
         wait_until(lambda: any(s.get("model_status") == "timeout" for s in statuses))
         assert client.terminations == 1
-        client.submit(replace(view, state_version=8))
+        _submit(client, replace(view, state_version=8))
         wait_until(lambda: len(client.sent) == 2)
         assert client.launches == 2
         assert client.source.name == "synthetic.npz"
@@ -161,7 +167,7 @@ def test_timeout_restarts_same_source_on_next_observation(tmp_path, view):
 def test_close_drops_inflight_result_and_stops_thread(tmp_path, view):
     results, statuses = [], []
     client = ControlledClient(tmp_path, results, statuses)
-    client.submit(view)
+    _submit(client, view)
     wait_until(lambda: bool(client.sent))
     thread = client._thread
     closer = threading.Thread(target=client.close)
@@ -177,7 +183,7 @@ def test_close_drops_inflight_result_and_stops_thread(tmp_path, view):
 def test_invalid_public_input_is_not_sent(tmp_path, view):
     results, statuses = [], []
     client = ControlledClient(tmp_path, results, statuses)
-    client.submit(replace(view, visibility="private"))
+    _submit(client, replace(view, visibility="private"))
     assert not client.sent
     assert client.launches == 0
     assert statuses[-1]["error_code"] == "MODEL_INPUT_UNSUPPORTED"
@@ -191,7 +197,7 @@ def test_real_subprocess_generic_client_with_synthetic_artifact(npz_path, manife
     client = InferenceClient(source=source, on_result=results.append, on_status=statuses.append,
                              timeout_seconds=3)
     try:
-        client.submit(view)
+        _submit(client, view)
         wait_until(lambda: bool(results) or any(s.get("model_status") == "error" for s in statuses), timeout=15)
         assert len(results) == 1, statuses
         assert isinstance(results[0], CanonicalAdviceResult)
@@ -207,7 +213,7 @@ def test_real_missing_model_never_reports_ready(tmp_path, view):
     results, statuses = [], []
     client = InferenceClient(tmp_path / "missing.npz", on_result=results.append, on_status=statuses.append)
     try:
-        client.submit(view)
+        _submit(client, view)
         wait_until(lambda: any(s.get("model_status") == "error" for s in statuses), timeout=15)
         assert not results
         assert not any(s.get("model_status") == "ready" for s in statuses)
@@ -229,7 +235,7 @@ def test_startup_load_failure_does_not_switch_and_next_submit_can_retry(tmp_path
     try:
         client.start()
         wait_until(lambda: bool(statuses))
-        client.submit(view)
+        _submit(client, view)
         wait_until(lambda: len(client.sent) == 1)
         assert client.launches == 2
         client._responses.put(reply(client.sent[0]))
@@ -248,12 +254,12 @@ def test_callback_does_not_hold_transport_mutex_during_concurrent_submit(tmp_pat
         results.append(result)
     client.on_result = callback
     try:
-        client.submit(view)
+        _submit(client, view)
         wait_until(lambda: bool(client.sent))
         client._responses.put(reply(client.sent[0]))
         assert entered.wait(timeout=2)
         def submit():
-            client.submit(replace(view, state_version=8))
+            _submit(client, replace(view, state_version=8))
             submitted.set()
         thread = threading.Thread(target=submit, daemon=True)
         thread.start()
@@ -273,7 +279,7 @@ def test_selected_loading_loaded_source_fingerprint_is_consistent(npz_path, view
                              timeout_seconds=3)
     expected = hashlib.sha256(npz_path.read_bytes()).hexdigest()
     try:
-        client.submit(view)
+        _submit(client, view)
         wait_until(lambda: bool(results) or any(s.get("model_status") == "error" for s in statuses),
                    timeout=15)
         loading = next(s for s in statuses if s.get("model_status") == "loading"
@@ -332,7 +338,7 @@ def test_fabledan_worker_ignores_untrusted_pythonpath_customizers(
     client = InferenceClient(npz_path, on_result=results.append, on_status=statuses.append,
                              timeout_seconds=3)
     try:
-        client.submit(view)
+        _submit(client, view)
         wait_until(lambda: bool(results) or any(s.get("model_status") == "error" for s in statuses),
                    timeout=15)
         assert len(results) == 1, statuses
@@ -342,3 +348,62 @@ def test_fabledan_worker_ignores_untrusted_pythonpath_customizers(
     finally:
         client.close()
     assert not sentinel.exists()
+
+
+def test_worker_handshake_timeout_is_bounded_and_reported_as_model_timeout(tmp_path):
+    import os
+    import sys
+
+    class HangingClient(InferenceClient):
+        def _worker_process_spec(self):
+            script = (
+                "import json,sys,time;"
+                "ids=json.loads(sys.stdin.readline());"
+                "payload={'protocol_version':3,'type':'status',"
+                "'request_id':ids['request_id'],'session_id':ids.get('session_id',''),"
+                "'game_id':ids.get('game_id',''),'state_version':ids.get('state_version',0),"
+                "'epoch':ids.get('epoch',0),'generation':ids.get('generation',0),"
+                "'model_status':'loading'};"
+                "print(json.dumps(payload),flush=True);"
+                "time.sleep(5)"
+            )
+            return [sys.executable, "-c", script], os.environ.copy(), 0
+
+    statuses: list[dict] = []
+    results: list = []
+    client = HangingClient(tmp_path / "synthetic.npz", on_result=results.append,
+                           on_status=statuses.append, timeout_seconds=1,
+                           load_timeout_seconds=0.3)
+    try:
+        client.start()
+        wait_until(lambda: any(item.get("model_status") in {"error", "unavailable", "timeout"}
+                               for item in statuses), timeout=10)
+        assert statuses[-1]["model_status"] == "error"
+        assert statuses[-1]["error_code"] == "MODEL_TIMEOUT"
+        assert not results
+    finally:
+        client.close()
+
+
+@pytest.mark.parametrize("value", [0, -1, 0.01, 601, True, "180"])
+def test_load_timeout_argument_is_bounded(tmp_path, value):
+    with pytest.raises(ModelBackendError) as exc:
+        InferenceClient(tmp_path / "synthetic.npz", on_result=lambda _r: None,
+                        on_status=lambda _s: None, load_timeout_seconds=value)
+    assert exc.value.code == "MODEL_INPUT_INVALID"
+
+
+def test_worker_launch_carries_the_selected_device(tmp_path):
+    for device in ("auto", "cpu", "cuda"):
+        client = InferenceClient(tmp_path / "synthetic.npz", on_result=lambda _r: None,
+                                 on_status=lambda _s: None, requested_device=device)
+        try:
+            command, _env, _flags = client._worker_process_spec()
+            assert command[-2:] == ["--device", device]
+            assert any("sys.dont_write_bytecode=True" in part for part in command)
+        finally:
+            client.close()
+    with pytest.raises(ModelBackendError) as exc:
+        InferenceClient(tmp_path / "synthetic.npz", on_result=lambda _r: None,
+                        on_status=lambda _s: None, requested_device="gpu")
+    assert exc.value.code == "MODEL_INPUT_INVALID"

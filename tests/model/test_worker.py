@@ -19,7 +19,7 @@ def execute(messages, **kwargs):
 
 
 def test_generic_load_recommend_stop_preserves_all_ids(manifest_path, view):
-    request = envelope("recommend", IDS, observation=view.to_dict())
+    request = envelope("recommend", IDS, request_kind="public", observation=view.to_dict())
     code, replies = execute([dumps(envelope("load", IDS, source=str(manifest_path))),
                             dumps(request), dumps(envelope("stop", IDS))])
     assert code == 0
@@ -52,7 +52,7 @@ def test_malformed_nonobject_oversized_or_unsupported_is_fatal(raw):
 
 @pytest.mark.parametrize("change", ["state", "hidden", "unknown"])
 def test_mismatched_state_and_unexpected_fields_terminate(view, change):
-    item = envelope("recommend", IDS, observation=view.to_dict())
+    item = envelope("recommend", IDS, request_kind="public", observation=view.to_dict())
     if change == "state":
         item["state_version"] += 1
     elif change == "hidden":
@@ -70,7 +70,7 @@ def test_failed_explicit_load_does_not_reuse_previous_provider(manifest_path, vi
     code, replies = execute([
         dumps(envelope("load", IDS, source=str(manifest_path))),
         dumps(envelope("load", IDS, source=str(manifest_path.parent / "missing.npz"))),
-        dumps(envelope("recommend", IDS, observation=view.to_dict())),
+        dumps(envelope("recommend", IDS, request_kind="public", observation=view.to_dict())),
     ])
     assert code == 0
     assert [r["error_code"] for r in replies if r["type"] == "error"] == ["ARTIFACT_MISSING", "MODEL_NOT_LOADED"]
@@ -91,7 +91,7 @@ def test_provider_exceptions_and_metadata_never_expose_internals(view, capsys):
         def create(self, source):
             return Advisor()
     code, replies = execute([dumps(envelope("load", IDS, source="synthetic")),
-        dumps(envelope("recommend", IDS, observation=view.to_dict()))], factory=Factory())
+        dumps(envelope("recommend", IDS, request_kind="public", observation=view.to_dict()))], factory=Factory())
     assert code == 0
     assert replies[1]["metadata"] == {"provider": "synthetic"}
     assert replies[-1]["error_code"] == "MODEL_INFERENCE_FAILED"
@@ -116,14 +116,14 @@ def test_provider_output_identity_and_ownership_validated(view, mode):
         def create(self, source):
             return Advisor()
     code, replies = execute([dumps(envelope("load", IDS, source="synthetic")),
-        dumps(envelope("recommend", IDS, observation=view.to_dict()))], factory=Factory())
+        dumps(envelope("recommend", IDS, request_kind="public", observation=view.to_dict()))], factory=Factory())
     assert code == 0
     assert replies[-1]["type"] == "error"
     assert not any(r["type"] == "result" for r in replies)
 
 
 def test_legacy_worker_cli_source_remains_supported(npz_path, view):
-    code, replies = execute([dumps(envelope("recommend", IDS, observation=view.to_dict()))],
+    code, replies = execute([dumps(envelope("recommend", IDS, request_kind="public", observation=view.to_dict()))],
                             weights_path=str(npz_path))
     assert code == 0
     assert replies[1]["type"] == "loaded"

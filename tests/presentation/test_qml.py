@@ -668,3 +668,45 @@ def test_phase6_settings_show_experimental_unavailable_metadata_without_win_rate
     assert "非胜率" in score and "胜率：" not in score
     assert "not_run" in str(_child(root, "modelEvaluationField").property("text"))
     assert "3" * 12 in str(_child(root, "modelDeploymentFingerprintField").property("text"))
+
+
+def _catalog_entry(model_id: str) -> dict:
+    return {"model_id": model_id, "directory": model_id, "provider": "fabledan",
+            "backend": "numpy", "runtime_contract": "fabledan.numpy.v1",
+            "classification": "legacy", "experimental": False,
+            "production_ready": False, "strength_claim": False, "fingerprint": "aaaa" * 3}
+
+
+def test_settings_catalog_lists_selects_and_reports_problems(ui) -> None:
+    app, _engine, root, vm = ui
+    vm.navigate("settings")
+    app.processEvents()
+    assert root.findChild(QQuickItem, "catalogList").property("visible") is False
+    assert _child(root, "catalogEmptyField").property("visible") is True
+
+    vm.set_catalog([_catalog_entry("fabledan-default")], [], "fabledan-default",
+                   "catalog：fabledan-default")
+    app.processEvents()
+    catalog_list = root.findChild(QQuickItem, "catalogList")
+    assert catalog_list.property("visible") is True
+    assert _child(root, "catalogEmptyField").property("visible") is False
+    select_button = _quick_named(catalog_list, "catalogSelectButton-fabledan-default")
+    assert select_button is not None
+    requested: list[str] = []
+    vm.catalogModelRequested.connect(requested.append)
+    _click(select_button)
+    assert requested == ["fabledan-default"]
+    assert "fabledan-default" in str(_child(root, "activeModelField").property("text"))
+
+    refreshes: list[bool] = []
+    vm.catalogRefreshRequested.connect(lambda: refreshes.append(True))
+    _click(_child(root, "catalogRefreshButton"))
+    assert refreshes == [True]
+
+    vm.set_catalog([_catalog_entry("fabledan-default")],
+                   [{"directory": "bad-bundle", "code": "MANIFEST_INVALID"}], "", "")
+    app.processEvents()
+    problems = _child(root, "catalogProblemsField")
+    assert problems.property("visible") is True
+    assert "MANIFEST_INVALID" in str(problems.property("text"))
+    assert "1 个不可用条目" in str(problems.property("text"))

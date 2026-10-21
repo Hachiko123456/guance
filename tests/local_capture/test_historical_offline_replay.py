@@ -11,7 +11,10 @@ from guance.infrastructure.capture.offline_replay import (
 
 ROOT = Path(__file__).resolve().parents[2]
 CAPTURES = ROOT / "debug" / "captures"
-RULES = Path(r"D:\project\guandan")
+# Frozen materialized runtime source (hash-verified GD-RULES, Phase 2 evidence);
+# the live Guandan worktree is deliberately never used as a rules/runtime root.
+RULES = (ROOT / "build" / "acceptance" / "guance-model-platform-20261016"
+         / "phase2" / "runtime" / "marvel-e5c82e7c-d7acbc8d" / "source")
 
 
 def test_reader_never_accesses_client_payload(tmp_path: Path):

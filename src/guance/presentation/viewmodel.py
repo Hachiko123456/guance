@@ -42,6 +42,8 @@ class GuanceViewModel(QObject):
     repairRequested = Signal()
     removeCertificateRequested = Signal(bool)
     modelImportRequested = Signal(str)
+    catalogModelRequested = Signal(str)
+    catalogRefreshRequested = Signal()
     exportDiagnosticsRequested = Signal()
     openDiagnosticsDirectoryRequested = Signal()
     openCaptureDirectoryRequested = Signal()
@@ -62,6 +64,7 @@ class GuanceViewModel(QObject):
     floatingLayoutSaveRequested = Signal(dict)
     screenWorkAreaChanged = Signal()
     confirmSeatRequested = Signal(str)
+    catalogChanged = Signal()
     _incoming = Signal(str, object)
 
     def __init__(self, parent: QObject | None = None) -> None:
@@ -79,6 +82,10 @@ class GuanceViewModel(QObject):
         self._certificate_fingerprint = ""
         self._model_state = "pending"
         self._model_summary = "尚未加载模型"
+        self._catalog_entries: list[dict[str, Any]] = []
+        self._catalog_problems: list[dict[str, Any]] = []
+        self._active_model_id = ""
+        self._active_model_summary = ""
         self._model_metadata: dict[str, Any] = {
             "status": "pending", "provider": "", "backend": "", "runtime": "",
             "runtime_version": "", "model_version": "", "capabilities": {},
@@ -139,6 +146,10 @@ class GuanceViewModel(QObject):
     modelState = Property(str, lambda s: s._model_state, notify=statusChanged)
     modelSummary = Property(str, lambda s: s._model_summary, notify=statusChanged)
     modelMetadata = Property(dict, lambda s: deepcopy(s._model_metadata), notify=statusChanged)
+    catalogEntries = Property(list, lambda s: deepcopy(s._catalog_entries), notify=catalogChanged)
+    catalogProblems = Property(list, lambda s: deepcopy(s._catalog_problems), notify=catalogChanged)
+    activeModelId = Property(str, lambda s: s._active_model_id, notify=catalogChanged)
+    activeModelSummary = Property(str, lambda s: s._active_model_summary, notify=catalogChanged)
     connected = Property(bool, lambda s: s._connected, notify=statusChanged)
     running = Property(bool, lambda s: s._running, notify=statusChanged)
     busy = Property(bool, lambda s: s._busy, notify=statusChanged)
@@ -255,6 +266,53 @@ class GuanceViewModel(QObject):
         if not self._demo and path and not self._running and not self._busy:
             url = QUrl(path)
             self.modelImportRequested.emit(url.toLocalFile() if url.isLocalFile() else path)
+
+    @Slot(str)
+    def request_catalog_model(self, model_id: str) -> None:
+        value = model_id if isinstance(model_id, str) else ""
+        if not self._demo and value.strip() and not self._running and not self._busy:
+            self.catalogModelRequested.emit(value.strip())
+
+    @Slot()
+    def request_catalog_refresh(self) -> None:
+        if not self._demo and not self._busy:
+            self.catalogRefreshRequested.emit()
+
+    def set_catalog(self, entries: Any, problems: Any, active_model_id: str,
+                    active_model_summary: str) -> None:
+        """Project bounded catalog discovery results into read-only QML properties."""
+        def text(value: Any, limit: int) -> str:
+            return safe_text(value, limit) if isinstance(value, str) else ""
+
+        projected: list[dict[str, Any]] = []
+        for entry in entries if isinstance(entries, list) else []:
+            if not isinstance(entry, Mapping):
+                continue
+            projected.append({
+                "model_id": text(entry.get("model_id"), 128),
+                "directory": text(entry.get("directory"), 128),
+                "provider": text(entry.get("provider"), 64),
+                "backend": text(entry.get("backend"), 64),
+                "runtime_contract": text(entry.get("runtime_contract"), 64),
+                "classification": text(entry.get("classification"), 64),
+                "experimental": entry.get("experimental") is True,
+                "production_ready": entry.get("production_ready") is True,
+                "strength_claim": entry.get("strength_claim") is True,
+                "fingerprint": text(entry.get("artifact_sha256"), 64)[:12],
+            })
+        bounded_problems: list[dict[str, Any]] = []
+        for problem in problems if isinstance(problems, list) else []:
+            if not isinstance(problem, Mapping):
+                continue
+            if len(bounded_problems) >= 32:
+                break
+            bounded_problems.append({"directory": text(problem.get("directory"), 128),
+                                     "code": text(problem.get("code"), 64)})
+        self._catalog_entries = projected
+        self._catalog_problems = bounded_problems
+        self._active_model_id = text(active_model_id, 128)
+        self._active_model_summary = text(active_model_summary, 200)
+        self.catalogChanged.emit()
 
     @Slot()
     def request_export_diagnostics(self) -> None:
@@ -674,18 +732,65 @@ class GuanceViewModel(QObject):
             "fingerprint": text("fingerprint", "model_sha256", limit=128),
         }
         for key, limit in (
-            ("runtime_version", 80), ("bundle_fingerprint", 128),
+            ("runtime_version", 80), ("runtime_contract", 80), ("bundle_fingerprint", 128),
             ("deployment_fingerprint", 128), ("score_kind", 80),
             ("classification", 80), ("formal_evaluation_status", 80),
-            ("champion_status", 80),
+            ("champion_status", 80), ("requested_device", 16), ("actual_device", 16),
+            ("device_reason", 64), ("torch_cuda_build", 32), ("device_evidence", 128),
         ):
             value = text(key, limit=limit)
             if value:
                 result[key] = value
-        for key in ("experimental", "production_ready", "strength_claim", "public_self_supported"):
+        iteration = source.get("iteration")
+        if type(iteration) is int and 0 <= iteration < 2**31:
+            result["iteration"] = iteration
+        for key in ("experimental", "production_ready", "strength_claim", "public_self_supported",
+                    "device_fallback"):
             if type(source.get(key)) is bool:
                 result[key] = source[key]
+        summary = GuanceViewModel._device_summary(result)
+        if summary:
+            result["device_summary"] = summary
         return result
+
+    _DEVICE_REASON_LABELS = {
+        "CUDA_PROBE_OK": "CUDA 执行探测成功",
+        "FORCED_CPU": "已强制使用 CPU",
+        "LEGACY_CPU_CONTRACT": "旧 CPU 契约",
+        "CPU_ONLY_TORCH": "当前 Torch 为 CPU-only 构建",
+        "NO_CUDA_DEVICE": "未检测到可用 CUDA 设备",
+        "CUDA_NOT_AVAILABLE": "CUDA 不可用",
+        "CUDA_INIT_UNAVAILABLE": "CUDA 初始化不可用",
+        "CUDA_PROBE_OOM": "CUDA 显存不足",
+        "CUDA_PROBE_FAILED": "CUDA 执行探测失败",
+        "TORCH_UNAVAILABLE": "Torch 不可用",
+    }
+
+    @staticmethod
+    def _device_summary(metadata: Mapping[str, Any]) -> str:
+        requested = str(metadata.get("requested_device", "") or "")
+        actual = str(metadata.get("actual_device", "") or "")
+        reason = str(metadata.get("device_reason", "") or "")
+        label = GuanceViewModel._DEVICE_REASON_LABELS.get(reason, reason)
+        if actual.startswith("cuda:"):
+            return safe_text(f"当前使用 GPU 推理（{actual}）", 160)
+        if actual == "cpu":
+            if metadata.get("device_fallback") is True:
+                detail = f"GPU 不可用，当前使用 CPU 推理：{label}"
+                if requested:
+                    detail += f"（请求：{requested}）"
+                return safe_text(detail, 160)
+            if reason == "FORCED_CPU":
+                return "已强制使用 CPU 推理"
+            if reason == "LEGACY_CPU_CONTRACT":
+                return "旧 CPU 契约：当前使用 CPU 推理"
+            return "当前使用 CPU 推理"
+        if reason:
+            detail = f"推理设备尚未确定：{label}"
+            if requested:
+                detail += f"（请求：{requested}）"
+            return safe_text(detail, 160)
+        return ""
 
     def _status(self, data: dict[str, Any]) -> None:
         self._demo = bool(data.get("demo", self._demo))

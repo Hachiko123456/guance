@@ -16,22 +16,29 @@ from guance.contracts import ModelMetadata
 from guance.infrastructure.model.errors import ModelBackendError
 from guance.infrastructure.model.factory import ModelFactory
 from guance.infrastructure.model.marvel_v2 import runtime as runtime_module
-from guance.infrastructure.model.marvel_v2.identity import (
-    CHECKPOINT_SHA256, CONFIG_SHA256, CheckpointIdentity, fixed_manifest,
-)
+from guance.infrastructure.model.marvel_v2.identity import CheckpointIdentity, checkpoint_manifest
 from guance.infrastructure.model.marvel_v2.checkpoint import canonical_json_hash
 from guance.infrastructure.model.marvel_v2.runtime import MarvelV2DemoRuntime
 from guance.infrastructure.model.providers.guandan_marvel_v2 import GuandanMarvelV2Provider
 from guance.infrastructure.model.registry import default_registry
 
 # Shared optional fixtures live only in the two explicitly authorized test files.
-from test_guandan_marvel_v2_checkpoint import checkpoint_bundle, checkpoint_payload, torch_module
+from test_guandan_marvel_v2_checkpoint import (
+    checkpoint_bundle, checkpoint_expectation, checkpoint_payload, pinned_expectation, torch_module,
+)
+
+# Bundle-declared expectation for the locally pinned evaluation checkpoint
+# (test fixture data; production constants no longer exist).
+EXPECTATION = pinned_expectation()
 
 
 @pytest.fixture
 def marvel_modules(monkeypatch, torch_module):
     # Local opt-in test harness only. Never installed into a production sys.path.
-    source = Path(os.environ.get("GUANCE_MARVEL_V2_SOURCE", r"D:\project\guandan"))
+    source = Path(os.environ.get(
+        "GUANCE_MARVEL_V2_SOURCE",
+        r"D:\project\guance\build\acceptance\guance-model-platform-20261016"
+        r"\phase2\runtime\marvel-e5c82e7c-d7acbc8d\source"))
     monkeypatch.setattr(sys, "dont_write_bytecode", True)
     if source.is_dir():
         monkeypatch.syspath_prepend(str(source))
@@ -66,7 +73,7 @@ def synthetic_rollout(torch, steps=2):
 @pytest.fixture
 def loaded_runtime(checkpoint_bundle, marvel_modules):
     runtime = MarvelV2DemoRuntime()
-    runtime.load(checkpoint_bundle)
+    runtime.load(checkpoint_bundle, EXPECTATION)
     yield runtime
     runtime.close()
 
@@ -91,7 +98,7 @@ def test_strict_reconstruction_eval_inference_and_masked_cpu_forward(
         values = cfg.to_dict()
         assert cfg.device == "cpu"
         values["device"] = checkpoint_payload.data["resolved_config"]["device"]
-        assert canonical_json_hash(values) == CONFIG_SHA256
+        assert canonical_json_hash(values) == EXPECTATION.resolved_config_hash
         assert enable_value_head is True
         return original_agent(cfg, enable_value_head=enable_value_head)
     def load(model, state, *, strict):
@@ -101,7 +108,7 @@ def test_strict_reconstruction_eval_inference_and_masked_cpu_forward(
     monkeypatch.setattr(original_agent, "load_state_dict", load)
     runtime = MarvelV2DemoRuntime()
     try:
-        identity = runtime.load(checkpoint_bundle)
+        identity = runtime.load(checkpoint_bundle, EXPECTATION)
         assert calls == [(78, True)]
         assert not runtime._model.training
         assert runtime._model.value_head is not None
@@ -136,10 +143,10 @@ def test_load_idempotent_reload_drops_old_model_and_close_terminal(loaded_runtim
     runtime = loaded_runtime
     old = runtime._model
     original_identity = runtime.metadata
-    assert runtime.load(checkpoint_bundle) is original_identity
+    assert runtime.load(checkpoint_bundle, EXPECTATION) is original_identity
     assert runtime._model is old
     old_reference = weakref.ref(old)
-    runtime.reload(checkpoint_bundle)
+    runtime.reload(checkpoint_bundle, EXPECTATION)
     assert runtime._model is not old
     del old
     assert old_reference() is None
@@ -148,7 +155,7 @@ def test_load_idempotent_reload_drops_old_model_and_close_terminal(loaded_runtim
     runtime.close()
     assert_cleared(runtime)
     assert live_reference() is None
-    for action in (lambda: runtime.load(checkpoint_bundle), lambda: runtime.reload(checkpoint_bundle),
+    for action in (lambda: runtime.load(checkpoint_bundle, EXPECTATION), lambda: runtime.reload(checkpoint_bundle, EXPECTATION),
                    lambda: runtime.forward_synthetic(synthetic_rollout(torch_module))):
         with pytest.raises(ModelBackendError) as exc:
             action()
@@ -158,13 +165,13 @@ def test_load_idempotent_reload_drops_old_model_and_close_terminal(loaded_runtim
 def test_failed_reload_cannot_keep_old_model(loaded_runtime, checkpoint_bundle, torch_module):
     wrong = replace(checkpoint_bundle, manifest=replace(checkpoint_bundle.manifest, architecture="v1.2"))
     with pytest.raises(ModelBackendError) as exc:
-        loaded_runtime.reload(wrong)
+        loaded_runtime.reload(wrong, EXPECTATION)
     assert exc.value.code == "MODEL_VERSION_UNSUPPORTED"
     assert_cleared(loaded_runtime)
     with pytest.raises(ModelBackendError) as exc:
         loaded_runtime.forward_synthetic(synthetic_rollout(torch_module))
     assert exc.value.code == "MODEL_NOT_LOADED"
-    assert loaded_runtime.load(checkpoint_bundle).status == "demo_loaded"
+    assert loaded_runtime.load(checkpoint_bundle, EXPECTATION).status == "demo_loaded"
 
 
 @pytest.mark.parametrize("dependency", ["torch", "guandan_marvel.config", "guandan_marvel.model"])
@@ -177,7 +184,7 @@ def test_optional_dependency_failure_unavailable_no_fallback(checkpoint_bundle, 
     monkeypatch.setattr(importlib, "import_module", unavailable)
     runtime = MarvelV2DemoRuntime()
     with pytest.raises(ModelBackendError) as exc:
-        runtime.load(checkpoint_bundle)
+        runtime.load(checkpoint_bundle, EXPECTATION)
     assert exc.value.code == "MODEL_UNAVAILABLE"
     assert "private" not in str(exc.value)
     assert_cleared(runtime)
@@ -203,7 +210,7 @@ def test_failed_reconstruction_cleans_up(checkpoint_bundle, marvel_modules, monk
         monkeypatch.setattr(model_module.Agent, "load_state_dict" if stage == "strict" else "eval", fail)
     runtime = MarvelV2DemoRuntime()
     with pytest.raises(ModelBackendError) as exc:
-        runtime.load(checkpoint_bundle)
+        runtime.load(checkpoint_bundle, EXPECTATION)
     assert exc.value.code == "MODEL_LOAD_FAILED"
     assert "private" not in str(exc.value)
     assert_cleared(runtime)
@@ -270,7 +277,7 @@ def test_late_forward_and_load_results_discarded(loaded_runtime, checkpoint_bund
     assert_cleared(loaded_runtime)
     ticks = iter([0, 2])
     with pytest.raises(ModelBackendError) as exc:
-        loaded_runtime.load(checkpoint_bundle, timeout_seconds=1)
+        loaded_runtime.load(checkpoint_bundle, EXPECTATION, timeout_seconds=1)
     assert exc.value.code == "MODEL_TIMEOUT"
     assert_cleared(loaded_runtime)
 
@@ -279,15 +286,20 @@ def test_late_forward_and_load_results_discarded(loaded_runtime, checkpoint_bund
 def test_invalid_timeout_rejected_without_loading(checkpoint_bundle, timeout):
     runtime = MarvelV2DemoRuntime()
     with pytest.raises(ModelBackendError) as exc:
-        runtime.load(checkpoint_bundle, timeout_seconds=timeout)
+        runtime.load(checkpoint_bundle, EXPECTATION, timeout_seconds=timeout)
     assert exc.value.code == "MODEL_INPUT_INVALID"
     assert_cleared(runtime)
 
 
-def test_only_cpu_device_override_allowed():
-    with pytest.raises(ModelBackendError) as exc:
-        MarvelV2DemoRuntime(device="cuda")
-    assert exc.value.code == "RUNTIME_UNSUPPORTED"
+def test_device_selection_accepts_cpu_and_cuda_and_rejects_invalid_names():
+    assert MarvelV2DemoRuntime().device_name == "cpu"
+    assert MarvelV2DemoRuntime(device="cpu").device_name == "cpu"
+    assert MarvelV2DemoRuntime(device="cuda").device_name == "cuda:0"
+    assert MarvelV2DemoRuntime(device="cuda:0").device_name == "cuda:0"
+    for value in ("gpu", "cuda:-1", "cuda:", "", None, 0):
+        with pytest.raises(ModelBackendError) as exc:
+            MarvelV2DemoRuntime(device=value)
+        assert exc.value.code == "RUNTIME_UNSUPPORTED"
     with pytest.raises(TypeError):
         MarvelV2DemoRuntime(seed=1)
 
@@ -318,12 +330,28 @@ def test_default_provider_never_instantiates_demo_or_adapter(checkpoint_bundle, 
     assert exc.value.code == "MODEL_CLOSED"
 
 
-@pytest.mark.parametrize("capability", ["complete_action", "public_plus_self", "search", "beam_search", "belief"])
+@pytest.mark.parametrize("capability", ["public_plus_self", "search", "beam_search", "belief"])
 def test_descriptor_cannot_advertise_unimplemented_capabilities(capability):
-    manifest = fixed_manifest("model.pt")
+    manifest = checkpoint_manifest("model.pt", "a" * 64,
+                                   model_version="MARVEL-V2-v1.3-iter000100",
+                                   training_version="M09-IPPO-pilot-20261011")
     manifest = replace(manifest, capabilities={**manifest.capabilities, capability: True})
     with pytest.raises(ModelBackendError) as exc:
         default_registry().resolve(manifest)
+    assert exc.value.code == "CONTRACT_UNSUPPORTED"
+
+
+def test_confirmed_decision_capability_requires_complete_action():
+    manifest = checkpoint_manifest("model.pt", "a" * 64,
+                                   model_version="MARVEL-V2-v1.3-iter002000",
+                                   training_version="M09-comparison-delivery-20261016")
+    with_confirm = replace(manifest, capabilities={
+        **manifest.capabilities, "complete_action": True, "confirmed_decision": True})
+    default_registry().resolve(with_confirm)
+    without_complete = replace(manifest, capabilities={
+        **manifest.capabilities, "confirmed_decision": True})
+    with pytest.raises(ModelBackendError) as exc:
+        default_registry().resolve(without_complete)
     assert exc.value.code == "CONTRACT_UNSUPPORTED"
 
 
@@ -362,28 +390,28 @@ assert not any(name.split('.')[0] in blocked for name in sys.modules)
 def test_repair_repeated_load_permission_error_is_bounded_and_cleans_up(
         loaded_runtime, checkpoint_bundle, monkeypatch):
     sentinel = "GMV2_REPEATED_LOAD_PERMISSION_ERROR_SENTINEL"
-    def denied(bundle):
+    def denied(bundle, expectation):
         raise PermissionError(sentinel)
     with monkeypatch.context() as patch:
         patch.setattr(runtime_module, "verified_artifact_bytes", denied)
         with pytest.raises(ModelBackendError) as exc:
-            loaded_runtime.load(checkpoint_bundle)
+            loaded_runtime.load(checkpoint_bundle, EXPECTATION)
         assert exc.value.code == "MODEL_LOAD_FAILED"
         assert sentinel not in str(exc.value)
         assert sentinel not in "".join(traceback.format_exception(exc.value))
         assert exc.value.__suppress_context__ is True
         assert_cleared(loaded_runtime)
-    assert loaded_runtime.load(checkpoint_bundle).status == "demo_loaded"
+    assert loaded_runtime.load(checkpoint_bundle, EXPECTATION).status == "demo_loaded"
 
 
 @pytest.mark.parametrize("code", ["ARTIFACT_HASH_MISMATCH", "ARTIFACT_MISSING"])
 def test_repair_repeated_load_preserves_stable_errors(loaded_runtime, checkpoint_bundle, monkeypatch, code):
     expected = ModelBackendError(code)
-    def rejected(bundle):
+    def rejected(bundle, expectation):
         raise expected
     monkeypatch.setattr(runtime_module, "verified_artifact_bytes", rejected)
     with pytest.raises(ModelBackendError) as exc:
-        loaded_runtime.load(checkpoint_bundle)
+        loaded_runtime.load(checkpoint_bundle, EXPECTATION)
     assert exc.value is expected
     assert_cleared(loaded_runtime)
 
@@ -397,13 +425,13 @@ def test_repair_invalid_timeout_has_stable_code_on_both_load_paths(
     runtime = MarvelV2DemoRuntime()
     try:
         if preloaded:
-            runtime.load(checkpoint_bundle)
+            runtime.load(checkpoint_bundle, EXPECTATION)
         def forbidden(*args, **kwargs):
             pytest.fail("invalid timeout reached artifact loading")
         monkeypatch.setattr(runtime_module, "load_checkpoint", forbidden)
         monkeypatch.setattr(runtime_module, "verified_artifact_bytes", forbidden)
         with pytest.raises(ModelBackendError) as exc:
-            runtime.load(checkpoint_bundle, timeout_seconds=timeout)
+            runtime.load(checkpoint_bundle, EXPECTATION, timeout_seconds=timeout)
         assert exc.value.code == "MODEL_INPUT_INVALID"
         assert_cleared(runtime)
     finally:
@@ -415,14 +443,18 @@ def test_repair_invalid_timeout_has_stable_code_on_both_load_paths(
     ("demo_loaded", "experimental_demo_loaded"),
 ])
 def test_repair_checkpoint_identity_projects_to_existing_model_metadata(identity_status, projected_status):
-    identity = replace(CheckpointIdentity(), status=identity_status)
+    identity = replace(CheckpointIdentity(checkpoint_sha256=EXPECTATION.sha256,
+                                          model_version=EXPECTATION.model_version,
+                                          resolved_config_hash=EXPECTATION.resolved_config_hash,
+                                          source_hash=EXPECTATION.source_hash),
+                       status=identity_status)
     metadata = identity.to_model_metadata()
     assert isinstance(metadata, ModelMetadata)
     assert metadata.status == projected_status
     assert metadata.provider == "guandan_marvel_v2"
-    assert metadata.backend == "guandan" and metadata.runtime == "torch"
-    assert metadata.model_version == "MARVEL-V2-v1.3-iter000100"
-    assert metadata.model_sha256 == CHECKPOINT_SHA256
+    assert metadata.backend == "guandan" and metadata.runtime == "torch-cpu"
+    assert metadata.model_version == EXPECTATION.model_version
+    assert metadata.model_sha256 == EXPECTATION.sha256
     assert metadata.test_only is True and metadata.legacy is False
     assert metadata.score_kind == "marvel_v2_row_probability"
     assert metadata.input_contract == "GuandanMARVELV2.Rollout.v1"
@@ -431,7 +463,8 @@ def test_repair_checkpoint_identity_projects_to_existing_model_metadata(identity
     assert metadata.wire_input_contract == metadata.wire_output_contract == ""
     assert metadata.capabilities.to_dict() == {
         "recommend": False, "top_n": False, "complete_action": False,
-        "next_token_policy": True, "beam_search": False, "belief": False,
+        "next_token_policy": True, "confirmed_decision": False,
+        "beam_search": False, "belief": False,
         "search": False, "public_plus_self": False,
     }
     assert not metadata.extras and not metadata.capabilities.extras
@@ -455,12 +488,12 @@ def test_repair_runtime_exposes_projection_and_explicit_private_identity(checkpo
     runtime = MarvelV2DemoRuntime()
     assert runtime.identity is None and runtime.model_metadata is None
     try:
-        identity = runtime.load(checkpoint_bundle)
+        identity = runtime.load(checkpoint_bundle, EXPECTATION)
         assert runtime.identity is identity
         assert runtime.metadata is identity  # Preserve the existing private-metadata API.
         assert isinstance(runtime.model_metadata, ModelMetadata)
         assert runtime.model_metadata == identity.to_model_metadata()
-        assert runtime.load(checkpoint_bundle) is identity
+        assert runtime.load(checkpoint_bundle, EXPECTATION) is identity
         assert not runtime.identity.production_ready and not runtime.identity.strength_claim
     finally:
         runtime.close()
@@ -471,7 +504,7 @@ def test_confirmed_stepwise_cache_matches_full_forward(
         checkpoint_bundle, marvel_modules, torch_module):
     runtime = MarvelV2DemoRuntime()
     try:
-        runtime.load(checkpoint_bundle)
+        runtime.load(checkpoint_bundle, EXPECTATION)
         combined = synthetic_rollout(torch_module, steps=3)
         steps = []
         for index in range(3):
@@ -488,3 +521,64 @@ def test_confirmed_stepwise_cache_matches_full_forward(
         assert cache.seq_lens.tolist() == [3, 3, 3, 3]
     finally:
         runtime.close()
+
+
+def test_cpu_device_evidence_reports_parameters_and_cache_device(loaded_runtime):
+    evidence = loaded_runtime.device_evidence()
+    assert evidence["selected_device"] == "cpu"
+    assert evidence["parameter_count"] > 0 and evidence["parameter_device"] == "cpu"
+    assert evidence["buffer_count"] > 0 and evidence["buffer_device"] == "cpu"
+    assert evidence["cache_device"] == "cpu"
+
+
+def _cuda_available() -> bool:
+    try:
+        import torch
+    except Exception:
+        return False
+    try:
+        return bool(torch.cuda.is_available())
+    except Exception:
+        return False
+
+
+@pytest.mark.skipif(not _cuda_available(), reason="requires a real CUDA device")
+def test_real_cuda_runtime_moves_parameters_inputs_cache_and_forward(
+        checkpoint_bundle, torch_module):
+    runtime = MarvelV2DemoRuntime(device="cuda:0")
+    try:
+        runtime.load(checkpoint_bundle, EXPECTATION)
+        evidence = runtime.device_evidence()
+        assert evidence["selected_device"] == "cuda:0"
+        assert evidence["parameter_device"] == "cuda:0"
+        assert evidence["buffer_device"] in ("cuda:0", "")
+        assert evidence["cache_device"] == "cuda:0"
+        fields = {key: value.to("cuda:0")
+                  for key, value in synthetic_rollout(torch_module).items()}
+        result = runtime.forward_synthetic(fields, timeout_seconds=120)
+        assert result.device.type == "cuda"
+        assert not result.requires_grad and torch_module.is_inference(result)
+        assert bool(torch_module.isfinite(result).all())
+        assert bool((result[fields["avail_weights"][0, -1] == 0] == 0).all())
+        assert abs(float(result.sum().item()) - 1.0) <= 1e-5
+    finally:
+        runtime.close()
+
+
+def test_gpu_execution_failure_fails_closed_without_cpu_retry(
+        loaded_runtime, torch_module, monkeypatch):
+    runtime = loaded_runtime
+    model = runtime._model
+
+    def fail(*_args, **_kwargs):
+        raise RuntimeError("CUDA out of memory. Tried to allocate 64.00 MiB")
+
+    monkeypatch.setattr(type(model), "__call__", fail)
+    fields = synthetic_rollout(torch_module)
+    with pytest.raises(ModelBackendError) as exc:
+        runtime.forward_synthetic(fields)
+    assert exc.value.code == "MODEL_INFERENCE_FAILED"
+    assert runtime._model is None
+    with pytest.raises(ModelBackendError) as exc:
+        runtime.forward_synthetic(fields)
+    assert exc.value.code == "MODEL_NOT_LOADED"

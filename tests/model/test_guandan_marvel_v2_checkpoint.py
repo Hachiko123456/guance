@@ -1,7 +1,9 @@
-"""GMV2-P0-001/002/005: pinned artifact and restricted-loader negatives.
+"""GMV2-P0-001/002/005 (data-driven): restricted loader and expectation negatives.
 
-The optional real checkpoint is read in place, never copied. Temporary artifacts
-below contain only corrupt/synthetic bytes. Fixture reprs never expose payloads.
+The real pinned evaluation checkpoint is read in place, never copied, and its
+identity is declared by a locally pinned CheckpointExpectation (this is test
+fixture data, not a production constant). Temporary artifacts below contain only
+corrupt/synthetic bytes. Fixture reprs never expose payloads.
 """
 from copy import deepcopy
 from dataclasses import asdict, replace
@@ -15,12 +17,39 @@ from pathlib import Path
 import pytest
 
 from guance.infrastructure.model.errors import ModelBackendError
-from guance.infrastructure.model.manifest import ModelBundle, ModelManifest, load_bundle
+from guance.infrastructure.model.manifest import ModelBundle, ModelManifest, load_bundle, sha256_file
 from guance.infrastructure.model.marvel_v2 import checkpoint
-from guance.infrastructure.model.marvel_v2.identity import (
-    CHECKPOINT_SHA256, CONFIG_SHA256, DESCRIPTOR_FIELDS, CheckpointIdentity, fixed_manifest,
-)
+from guance.infrastructure.model.marvel_v2.checkpoint import CheckpointExpectation
+from guance.infrastructure.model.marvel_v2.identity import CheckpointIdentity, checkpoint_manifest
 from guance.infrastructure.model.marvel_v2.state_contract import STATE_SHAPES
+
+PINNED_ITER100 = {
+    "filename": "iter000100.pt",
+    "bytes": 8_316_529,
+    "sha256": "44b8a41371965279c7ce8f3e592162689e9a1b32cb4a07147f2a8ea58ff89696",
+    "schema": "guandan-marvel-evaluation-checkpoint-v1",
+    "algorithm": "ippo",
+    "architecture": "v1.3",
+    "protocol_version": "GD-ACTION-0.2-MARVEL|GD-ENV-0.2-MARVEL|GD-ENCODING-0.2-MARVEL",
+    "iteration": 100,
+    "classification": "evaluation_only",
+    "resume_classification": "evaluation_only",
+    "training_resume_allowed": False,
+    "resolved_config_hash": "944ac18bd65a1082fff70822960b98361ba5ab5c35ad67c6b0b92e0b5b382330",
+    "source_hash": "831e92294daea36297013cd2d079b53b887093972a3e66e7f7145c0dff3b495c",
+    "source_parent_commit": "18507bdaa8dd86b25817060d64852a7531cbd8e9",
+    "training_backend_identity_hash":
+        "5b8b7300f8bb32f0892959990ff9414dce67b51bd371e1063a8d9e78894c30de",
+    "payload_variant": "ddp_merged_frozen_v1",
+    "model_version": "MARVEL-V2-v1.3-iter000100",
+    "training_version": "M09-IPPO-pilot-20261011",
+}
+PAYLOAD_FIELDS = sorted(checkpoint._COMMON_PAYLOAD_KEYS
+                        | checkpoint._VARIANT_EXTRA_KEYS[PINNED_ITER100["payload_variant"]])
+
+
+def pinned_expectation() -> CheckpointExpectation:
+    return CheckpointExpectation(**PINNED_ITER100).validate()
 
 
 @pytest.fixture(scope="module")
@@ -33,13 +62,21 @@ def torch_module():
 
 
 @pytest.fixture(scope="module")
-def checkpoint_bundle():
+def checkpoint_expectation():
+    return pinned_expectation()
+
+
+@pytest.fixture(scope="module")
+def checkpoint_bundle(checkpoint_expectation):
     path = Path(os.environ.get("GUANCE_MARVEL_V2_CHECKPOINT", (
         r"D:\project\guandan\runs\M09_full_training\remote\ippo_pilot_failed_20261011"
         r"\extracted-output\evaluation_checkpoints\iter000100.pt")))
     if not path.is_file():
         pytest.skip("fixed evaluation checkpoint not available; no download or copy")
-    return ModelBundle(fixed_manifest(path.name), path.parent)
+    return ModelBundle(checkpoint_manifest(
+        path.name, checkpoint_expectation.sha256,
+        model_version=checkpoint_expectation.model_version,
+        training_version=checkpoint_expectation.training_version), path.parent)
 
 
 class _RedactedPayload:
@@ -51,33 +88,42 @@ class _RedactedPayload:
 
 
 @pytest.fixture(scope="module")
-def checkpoint_payload(checkpoint_bundle, torch_module):
-    raw = checkpoint.verified_artifact_bytes(checkpoint_bundle)
+def checkpoint_payload(checkpoint_bundle, checkpoint_expectation, torch_module):
+    raw = checkpoint.verified_artifact_bytes(checkpoint_bundle, checkpoint_expectation)
     return _RedactedPayload(checkpoint._restricted_load(raw))
 
 
-def assert_rejected(payload, torch):
+def assert_rejected(payload, torch, expectation=None):
     with pytest.raises(ModelBackendError) as exc:
-        checkpoint._parse_payload(payload, torch)
+        checkpoint._parse_payload(payload, torch, expectation or pinned_expectation())
     assert exc.value.code == "MODEL_LOAD_FAILED"
     assert "project" not in str(exc.value).lower()
 
 
-def test_fixed_explicit_bundle_restricted_load(checkpoint_bundle, torch_module, monkeypatch):
+def test_fixed_explicit_bundle_restricted_load(checkpoint_bundle, checkpoint_expectation,
+                                               torch_module, monkeypatch):
     calls = []
     original = torch_module.load
     def load(stream, **kwargs):
         calls.append(kwargs)
-        assert hashlib.sha256(stream.getvalue()).hexdigest() == CHECKPOINT_SHA256
+        assert hashlib.sha256(stream.getvalue()).hexdigest() == checkpoint_expectation.sha256
         return original(stream, **kwargs)
     monkeypatch.setattr(torch_module, "load", load)
     bundle = load_bundle(checkpoint_bundle)
-    loaded = checkpoint.load_checkpoint(bundle)
+    loaded = checkpoint.load_checkpoint(bundle, checkpoint_expectation)
     assert calls == [{"map_location": "cpu", "weights_only": True}]
     assert len(loaded.state_dict) == 78
     assert loaded.state_dict.keys() == STATE_SHAPES.keys()
-    assert checkpoint.canonical_json_hash(loaded.resolved_config) == CONFIG_SHA256
-    assert loaded.identity == CheckpointIdentity()
+    assert checkpoint.canonical_json_hash(loaded.resolved_config) == checkpoint_expectation.resolved_config_hash
+    assert loaded.identity == CheckpointIdentity(
+        checkpoint_sha256=checkpoint_expectation.sha256, algorithm="ippo", architecture="v1.3",
+        iteration=100, resolved_config_hash=checkpoint_expectation.resolved_config_hash,
+        source_hash=checkpoint_expectation.source_hash,
+        source_fingerprint_hash=checkpoint_expectation.source_hash,
+        source_parent_commit=checkpoint_expectation.source_parent_commit,
+        training_backend_identity_hash=checkpoint_expectation.training_backend_identity_hash,
+        model_version=checkpoint_expectation.model_version,
+        training_version=checkpoint_expectation.training_version)
     assert all(tuple(t.shape) == STATE_SHAPES[k] and t.dtype == torch_module.float32
                and bool(torch_module.isfinite(t).all()) for k, t in loaded.state_dict.items())
     rendered = repr(loaded)
@@ -89,7 +135,7 @@ def test_fixed_explicit_bundle_restricted_load(checkpoint_bundle, torch_module, 
         loaded.identity.production_ready = True
 
 
-@pytest.mark.parametrize("field", sorted(checkpoint._PAYLOAD_KEYS))
+@pytest.mark.parametrize("field", PAYLOAD_FIELDS)
 def test_missing_checkpoint_fields_fail_closed(checkpoint_payload, torch_module, field):
     data = dict(checkpoint_payload.data)
     del data[field]
@@ -103,7 +149,7 @@ def test_missing_checkpoint_fields_fail_closed(checkpoint_payload, torch_module,
     ("training_resume_allowed", 0), ("protocol_version", "GD-ACTION-0.1"),
     ("backend", "python"), ("source_hash", "0" * 64),
     ("source_parent_commit", "0" * 40), ("resolved_config_hash", "0" * 64),
-    ("classification", "training"), ("unknown", {}),
+    ("unknown", {}),
 ])
 def test_wrong_scalar_identity_rejected(checkpoint_payload, torch_module, field, value):
     data = {**checkpoint_payload.data, field: value}
@@ -111,7 +157,8 @@ def test_wrong_scalar_identity_rejected(checkpoint_payload, torch_module, field,
 
 
 @pytest.mark.parametrize("kind", ["config", "source", "backend", "source_rehash", "backend_rehash",
-                                   "config_rehash", "merged", "distributed_extra", "provenance_extra"])
+                                   "config_rehash", "merged", "merged_extra", "distributed_extra",
+                                   "provenance_extra", "variant_shape"])
 def test_nested_identity_cannot_self_certify(checkpoint_payload, torch_module, kind):
     data = {**checkpoint_payload.data}
     if kind.startswith("config"):
@@ -127,6 +174,11 @@ def test_nested_identity_cannot_self_certify(checkpoint_payload, torch_module, k
             data[key]["hash"] = checkpoint.canonical_json_hash({k: v for k, v in data[key].items() if k != "hash"})
     elif kind == "merged":
         data["merged_policy"] = {**data["merged_policy"], "beta": 0.5}
+    elif kind == "merged_extra":
+        data["merged_policy"] = {**data["merged_policy"], "unknown": True}
+    elif kind == "variant_shape":
+        # Removing the ddp-only key must not be accepted under the ddp variant.
+        data.pop("distributed_training")
     else:
         key = "distributed_training" if kind == "distributed_extra" else "training_data_provenance"
         data[key] = {**data[key], "unknown": True}
@@ -180,17 +232,22 @@ def test_canonical_hash_is_utf8_sorted_compact_and_finite():
 
 @pytest.mark.parametrize("missing", [False, True])
 def test_bad_artifact_rejected_before_torch_import(tmp_path, monkeypatch, missing):
+    path = tmp_path / "bad.pt"
     if not missing:
-        (tmp_path / "bad.pt").write_bytes(b"synthetic corrupt artifact")
+        path.write_bytes(b"synthetic corrupt artifact")
+    manifest = checkpoint_manifest("bad.pt", PINNED_ITER100["sha256"],
+                                   model_version="MARVEL-V2-v1.3-iter000100",
+                                   training_version="M09-IPPO-pilot-20261011")
     def forbidden():
         pytest.fail("Torch must not be imported before file integrity passes")
     monkeypatch.setattr(checkpoint, "_torch", forbidden)
     with pytest.raises(ModelBackendError) as exc:
-        checkpoint.load_checkpoint(ModelBundle(fixed_manifest("bad.pt"), tmp_path))
+        checkpoint.load_checkpoint(ModelBundle(manifest, tmp_path), pinned_expectation())
     assert exc.value.code == ("ARTIFACT_MISSING" if missing else "ARTIFACT_HASH_MISMATCH")
 
 
-def test_snapshot_rehashed_after_bundle_verification(checkpoint_bundle, monkeypatch):
+def test_snapshot_rehashed_after_bundle_verification(checkpoint_bundle, checkpoint_expectation,
+                                                     monkeypatch):
     original = Path.open
     count = 0
     def open_file(path, *args, **kwargs):
@@ -198,42 +255,65 @@ def test_snapshot_rehashed_after_bundle_verification(checkpoint_bundle, monkeypa
         if path == checkpoint_bundle.artifact_path:
             count += 1
             if count == 2:
-                return io.BytesIO(b"synthetic replacement after verification")
+                # Same length, different bytes: the hash gate must reject it.
+                return io.BytesIO(bytes(PINNED_ITER100["bytes"]))
         return original(path, *args, **kwargs)
     monkeypatch.setattr(Path, "open", open_file)
     monkeypatch.setattr(checkpoint, "_torch", lambda: pytest.fail("replacement reached Torch"))
     with pytest.raises(ModelBackendError) as exc:
-        checkpoint.load_checkpoint(checkpoint_bundle)
+        checkpoint.load_checkpoint(checkpoint_bundle, checkpoint_expectation)
     assert exc.value.code == "ARTIFACT_HASH_MISMATCH"
 
 
-def test_bare_pt_and_legacy_descriptor_remain_rejected(tmp_path):
+def test_bare_pt_and_legacy_descriptor_remain_rejected(tmp_path, checkpoint_expectation):
     with pytest.raises(ModelBackendError) as exc:
         load_bundle(tmp_path / "model.pt")
     assert exc.value.code == "MODEL_SOURCE_INVALID"
-    for source in (tmp_path / "model.pt", ModelBundle(fixed_manifest("model.pt"), tmp_path, legacy=True)):
+    manifest = checkpoint_manifest("model.pt", PINNED_ITER100["sha256"],
+                                   model_version="MARVEL-V2-v1.3-iter000100",
+                                   training_version="M09-IPPO-pilot-20261011")
+    for source in (tmp_path / "model.pt", ModelBundle(manifest, tmp_path, legacy=True)):
         with pytest.raises(ModelBackendError) as exc:
-            checkpoint.load_checkpoint(source)
+            checkpoint.load_checkpoint(source, checkpoint_expectation)
         assert exc.value.code == "MODEL_SOURCE_INVALID"
 
 
-@pytest.mark.parametrize("field", list(DESCRIPTOR_FIELDS))
-def test_every_descriptor_identity_field_is_pinned(field):
-    manifest = replace(fixed_manifest("model.pt"), **{field: "0" * 64 if field == "artifact_sha256" else "wrong"})
-    from guance.infrastructure.model.registry import default_registry
-    with pytest.raises(ModelBackendError):
-        default_registry().resolve(manifest)
+@pytest.mark.parametrize("field,value,code", [
+    ("sha256", "0" * 64, "ARTIFACT_HASH_MISMATCH"),
+    ("bytes", PINNED_ITER100["bytes"] + 1, "ARTIFACT_SIZE_MISMATCH"),
+    ("iteration", 101, "MODEL_LOAD_FAILED"),
+    ("resolved_config_hash", "0" * 64, "MODEL_LOAD_FAILED"),
+    ("source_hash", "0" * 64, "MODEL_LOAD_FAILED"),
+    ("source_parent_commit", "0" * 40, "MODEL_LOAD_FAILED"),
+    ("training_backend_identity_hash", "0" * 64, "MODEL_LOAD_FAILED"),
+    ("algorithm", "vrpo", "MODEL_VERSION_UNSUPPORTED"),
+    ("architecture", "v1.2", "MODEL_VERSION_UNSUPPORTED"),
+    ("protocol_version", "GD-ACTION-0.2-MARVEL", "MODEL_VERSION_UNSUPPORTED"),
+    ("schema", "guandan-marvel-other-v1", "MODEL_VERSION_UNSUPPORTED"),
+    ("payload_variant", "future_unknown_v2", "MODEL_VERSION_UNSUPPORTED"),
+    ("classification", "production", "MODEL_VERSION_UNSUPPORTED"),
+    ("training_resume_allowed", True, "MODEL_VERSION_UNSUPPORTED"),
+])
+def test_every_declared_expectation_field_is_enforced(checkpoint_bundle, field, value, code):
+    expectation = replace(pinned_expectation(), **{field: value})
+    with pytest.raises(ModelBackendError) as exc:
+        checkpoint.load_checkpoint(checkpoint_bundle, expectation)
+    assert exc.value.code == code
 
 
 @pytest.mark.parametrize("artifact", ["../model.pt", "C:/model.pt", "/model.pt", "sub/../../model.pt", "x:stream"])
 def test_v2_bundle_paths_stay_strict(artifact):
     with pytest.raises(ModelBackendError) as exc:
-        fixed_manifest(artifact)
+        checkpoint_manifest(artifact, "a" * 64,
+                            model_version="MARVEL-V2-v1.3-iter000100",
+                            training_version="M09-IPPO-pilot-20261011")
     assert exc.value.code == "ARTIFACT_PATH_INVALID"
 
 
 def test_v2_does_not_add_an_unbounded_manifest_metadata_blob():
-    data = fixed_manifest("model.pt").to_dict()
+    data = checkpoint_manifest("model.pt", "a" * 64,
+                               model_version="MARVEL-V2-v1.3-iter000100",
+                               training_version="M09-IPPO-pilot-20261011").to_dict()
     data["metadata"] = {"arbitrary": "value"}
     with pytest.raises(ModelBackendError) as exc:
         ModelManifest.from_dict(data)
@@ -271,6 +351,12 @@ def test_missing_torch_is_stable_unavailable(monkeypatch):
         checkpoint._restricted_load(b"synthetic")
     assert exc.value.code == "MODEL_UNAVAILABLE"
     assert "private" not in str(exc.value)
+
+
+def test_sha256_helper_matches_full_read(tmp_path):
+    path = tmp_path / "artifact.bin"
+    path.write_bytes(b"synthetic artifact bytes")
+    assert sha256_file(path) == hashlib.sha256(b"synthetic artifact bytes").hexdigest()
 
 
 def test_only_production_torch_load_is_restricted():

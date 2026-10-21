@@ -19,16 +19,22 @@ def app_paths() -> dict[str, Path]:
     override=os.environ.get('GUANCE_DATA_DIR')
     data=Path(override) if override else Path(os.environ.get('LOCALAPPDATA',Path.home()/'AppData'/'Local'))/'Guance'
     root=project_root()
+    models=data/'models'
     return {'data_dir':data,'config_dir':data/'config','logs_dir':data/'logs',
             # mitmproxy creates its capture CA in the same confdir used by the runtime.
             # Keep certificate discovery and helper generation on one path.
             'cert_dir':data/'config'/'mitmproxy','runtime_dir':root/'runtime',
-            'exports_dir':data/'exports','models_dir':data/'models','root_dir':root}
+            'exports_dir':data/'exports','models_dir':models,
+            'catalog_dir':models/'catalog','active_model_file':models/'active_model.json',
+            'root_dir':root}
 
 
 def ensure_app_paths(paths: dict[str, Path]) -> None:
     for name in ('data_dir','config_dir','logs_dir','cert_dir','exports_dir','models_dir'):
         paths[name].mkdir(parents=True,exist_ok=True)
+    catalog=paths.get('catalog_dir')
+    if catalog is not None:
+        catalog.mkdir(parents=True,exist_ok=True)
 
 
 def default_model_source(paths: dict[str, Path], preferences: dict[str, Any] | None = None) -> Path:
@@ -51,6 +57,7 @@ def default_model_path(paths: dict[str, Path]) -> Path:
 def load_preferences(paths: dict[str, Path]) -> dict[str, Any]:
     defaults={'theme':'system','floating':False,'floating_layout':{},'model_path':'',
               'model_selection_failed':False,'requested_model_path':'','inference_threads':2,
+              'model_device':'auto',
               'advice_timeout_ms':2000,'top_n':3,'debug_capture_enabled':True}
     p=paths['config_dir']/'preferences.json'
     try:

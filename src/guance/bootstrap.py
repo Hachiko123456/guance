@@ -234,7 +234,9 @@ def run_gui(args: Any, extra: list[str] | None = None) -> int:
     from .infrastructure.capture.canonical_capture import CanonicalCaptureConverter
     from .infrastructure.capture.diagnostics import BoundedDiagnostics
     from .infrastructure.capture.live_subset import NormalExchangeLiveSubsetProvider
+    from .infrastructure.model.catalog import ModelCatalog
     from .infrastructure.model.client import default_client_factory
+    from .infrastructure.model.marvel_v2.decision_request import project_confirmed_decision
     from .infrastructure.protocol.live import GAME_HOST, parse_aggregate
 
     app = QApplication.instance() or QApplication([])
@@ -286,6 +288,12 @@ def run_gui(args: Any, extra: list[str] | None = None) -> int:
             os.environ.get("GUANCE_MARVEL_V2_SOURCE", "").strip() or None
         ),
         canonical_converter_factory=CanonicalCaptureConverter,
+        confirmed_decision_projector=project_confirmed_decision,
+        catalog=ModelCatalog(
+            paths.get("catalog_dir", paths["models_dir"] / "catalog"),
+            paths.get("active_model_file", paths["models_dir"] / "active_model.json"),
+            root=paths["models_dir"],
+        ),
     )
     recovery = controller.recover_stale_runtime_proxy()
     if not recovery.get("ok", False):

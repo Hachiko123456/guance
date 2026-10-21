@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable
 
 from guance.domain.events import (
     ActionEvent, DealEvent, DeclaredActionCommitted, ExchangeInitializationEvent,
@@ -24,7 +24,6 @@ from guance.infrastructure.model.marvel_v2.contracts import (
     ExchangeTransferFacts, MarvelEvent, MarvelState, PASS_TOKEN, PreviousResultFacts,
 )
 from guance.infrastructure.model.marvel_v2.history import ExactHistoryJournal
-from guance.infrastructure.model.marvel_v2.identity import CHECKPOINT_SHA256
 from guance.infrastructure.model.marvel_v2.lifecycle_contracts import CacheRequestIdentity
 from guance.infrastructure.model.marvel_v2.live_adapter import MarvelV2ConfirmedDecisionAdapter
 from guance.infrastructure.model.marvel_v2.rules_oracle import (
@@ -39,7 +38,11 @@ from guance.public_state_contract import (
 SUBSET_IDENTITY = "MarvelV2NormalExchangeLiveSubset.v1"
 PROTOCOL_IDENTITY = "TencentDaguandanObservedProtocol.v20261014"
 NORMAL_EXCHANGE_IDENTITY = "NormalExchangeObserved.v1"
+# Capture-side cache binding only (never a model load-path pin): the normal-exchange
+# subset was calibrated against the historical iter000100 evaluation artifact.
+# Phase 3 will source this identity from the explicitly selected bundle.
 _ARTIFACT_ID = "iter000100"
+_LEGACY_CACHE_ARTIFACT_SHA256 = "44b8a41371965279c7ce8f3e592162689e9a1b32cb4a07147f2a8ea58ff89696"
 _ALLOWED_DEAL_SHAPES = {
     "1:0,2:2,3:0,4:0,5:2,6:2",
     "1:0,2:2,4:0,5:2,6:2",
@@ -61,10 +64,13 @@ class NormalExchangeLiveSubsetProvider:
         self._rules_source_root = None if not rules_source_root else Path(rules_source_root).resolve()
         self._oracle: VerifiedGuandanRulesOracle | None = None
         self._capture_id = ""
+        self._runtime_session_id = ""
         self._global_request_sequence = 0
         self._decisions: list[ConfirmedDecisionInput] = []
         self._model_adapter = MarvelV2ConfirmedDecisionAdapter()
         self._model_adapter_eligible_count = 0
+        self._artifact_identity_provider: Callable[[], tuple[str, str] | None] | None = None
+        self._cache_identity: tuple[str, str] | None = None
         self.reset_session()
 
     def reset_session(self) -> None:
@@ -82,7 +88,9 @@ class NormalExchangeLiveSubsetProvider:
         self._return_obligations: tuple[tuple[int, int], ...] = ()
         self._return_selections: list[ReturnSelectionEvent] = []
         self._history: ExactHistoryJournal | None = None
+        self._history_binding: tuple[str, str] | None = None
         self._cache: AbstractCacheLifecycle | None = None
+        self._cache_game_id: str | None = None
         self._transitions: list[ConfirmedActionTransition] = []
         self._last_decision_key: tuple[object, ...] | None = None
         self._decisions.clear()
@@ -94,6 +102,63 @@ class NormalExchangeLiveSubsetProvider:
         self._global_request_sequence = 0
         self._model_adapter_eligible_count = 0
         self._decisions.clear()
+        self._last_decision_key = None
+
+    def bind_runtime_session(self, session_id: str) -> None:
+        """Enable recommendation decision production without debug evidence.
+
+        This binding is independent of ``bind_capture``: no raw frame file or
+        canonical converter is required for the confirmed-decision producer to
+        work, and disabling debug recording must never disable it.
+        """
+        if not isinstance(session_id, str) or not session_id:
+            raise ValueError("runtime session id required")
+        self._runtime_session_id = session_id
+        self._global_request_sequence = 0
+        self._model_adapter_eligible_count = 0
+        self._decisions.clear()
+        self._last_decision_key = None
+
+    def unbind_runtime_session(self) -> None:
+        self._runtime_session_id = ""
+        self._decisions.clear()
+        self._last_decision_key = None
+
+    @property
+    def decision_session_id(self) -> str:
+        """Active producer identity: debug capture first, else the runtime session."""
+        return self._capture_id or self._runtime_session_id
+
+    def set_model_artifact_identity_provider(
+            self, provider: Callable[[], tuple[str, str] | None] | None) -> None:
+        """Bind decisions to the explicitly selected model artifact identity.
+
+        The provider is called at decision time and returns the ready MARVEL
+        artifact ``(artifact_id, artifact_sha256)`` or ``None``. ``None`` keeps
+        the historical fixture identity for capture-journal compatibility; the
+        recommendation path rejects such decisions because their identity cannot
+        equal the selected model's. Without any provider the fixture identity is
+        used (offline acceptance fixtures).
+        """
+        self._artifact_identity_provider = provider
+        self._cache = None
+        self._cache_identity = None
+
+    def _resolved_artifact_identity(self) -> tuple[str, str]:
+        if self._artifact_identity_provider is None:
+            return (_ARTIFACT_ID, _LEGACY_CACHE_ARTIFACT_SHA256)
+        return (self._artifact_identity_provider()
+                or (_ARTIFACT_ID, _LEGACY_CACHE_ARTIFACT_SHA256))
+
+    def _rebind_history_artifact(self, identity: tuple[str, str]) -> None:
+        """Keep the confirmed history artifact binding equal to the selected model."""
+        if self._history is None or self._history_binding == identity:
+            return
+        self._history = replace(self._history, artifact_id=identity[0],
+                                artifact_sha256=identity[1])
+        self._history_binding = identity
+        self._cache = None
+        self._cache_identity = None
         self._last_decision_key = None
 
     def unbind_capture(self) -> None:
@@ -388,11 +453,13 @@ class NormalExchangeLiveSubsetProvider:
             else:
                 events.append(MarvelEvent("PRIVATE_EXCHANGE_COMMIT", "RETURN", transfer.source_seat,
                                           tokens=(token, COMMIT_TOKEN)))
+        identity = self._resolved_artifact_identity()
         self._history = ExactHistoryJournal.from_events(
             session_id=self._session_id, game_id=state.game_id, state_id="state-pending",
-            artifact_id=_ARTIFACT_ID, artifact_sha256=CHECKPOINT_SHA256,
+            artifact_id=identity[0], artifact_sha256=identity[1],
             events=tuple(events),
         )
+        self._history_binding = identity
 
     def _exchange_transitions(self, start: StartEvent) -> list[ConfirmedActionTransition]:
         actors = [item.source_seat for item in self._tribute_transfers]
@@ -568,7 +635,8 @@ class NormalExchangeLiveSubsetProvider:
         return result
 
     def _maybe_decision(self, state: GameState, session_id: str, meta) -> None:
-        if (not self._capture_id or self._history is None or state.phase != "active"
+        decision_id = self.decision_session_id
+        if (not decision_id or self._history is None or state.phase != "active"
                 or state.my_seat not in range(4) or state.current_seat != state.my_seat
                 or meta is None):
             return
@@ -590,13 +658,22 @@ class NormalExchangeLiveSubsetProvider:
             committed_step=history_identity.committed_step,
         )
         marvel = self._marvel_state(public)
-        if self._cache is None:
+        artifact_identity = self._resolved_artifact_identity()
+        if self._history_binding is not None and artifact_identity != self._history_binding:
+            # Selected model changed: rebind the confirmed history/cache so the
+            # decision identity always follows the currently selected artifact.
+            self._rebind_history_artifact(artifact_identity)
+        if (self._cache is None or self._cache_identity != artifact_identity
+                or self._cache_game_id != public.identity.game_id):
             self._cache = AbstractCacheLifecycle(
                 lifecycle_id="normal-exchange-live", session_id=session_id,
-                game_id=public.identity.game_id, artifact_id=_ARTIFACT_ID,
-                artifact_sha256=CHECKPOINT_SHA256,
+                game_id=public.identity.game_id, artifact_id=artifact_identity[0],
+                artifact_sha256=artifact_identity[1],
                 initial_sequence=self._global_request_sequence,
             )
+            self._cache_identity = artifact_identity
+            self._cache_game_id = public.identity.game_id
+            self._last_decision_key = None
         request_key = f"decision-{self._global_request_sequence + 1}"
         request = self._cache.begin_request(self._history, request_key=request_key)
         self._global_request_sequence += 1
@@ -608,7 +685,7 @@ class NormalExchangeLiveSubsetProvider:
             return
         self._last_decision_key = key
         decision = ConfirmedDecisionInput(
-            self._capture_id, meta.sequence, 1, meta.sequence, public, marvel,
+            decision_id, meta.sequence, 1, meta.sequence, public, marvel,
             self._history, action_session, request, tuple(self._transitions),
         )
         self._model_adapter.adapt(decision)

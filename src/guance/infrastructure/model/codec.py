@@ -56,11 +56,8 @@ def dumps(item: Mapping[str, Any]) -> str:
 def validate_envelope(item: Any) -> dict[str, Any]:
     if not isinstance(item, dict):
         raise ModelBackendError("PROTOCOL_INVALID")
-    # Four-field envelopes from the original worker remain readable, but all new
-    # client traffic carries epoch and generation and is checked below.
-    for name, default in (("epoch", 0), ("generation", 0)):
-        if name not in item:
-            item[name] = default
+    # Protocol v3: the full request identity (including epoch/generation) is
+    # mandatory on every envelope. Legacy four-field envelopes are rejected.
     for name in ("request_id", "session_id", "game_id"):
         if not _bounded_identity(item.get(name), allow_empty=name != "request_id"):
             raise ModelBackendError("PROTOCOL_INVALID")
@@ -108,16 +105,21 @@ def safe_metadata(value: Mapping[str, Any]) -> dict[str, Any]:
     if not isinstance(value, Mapping):
         return {}
     fields = {"status", "provider", "backend", "runtime", "runtime_version", "model_version",
+              "runtime_contract", "iteration",
               "model_sha256", "bundle_fingerprint", "deployment_fingerprint", "legacy",
               "score_kind", "classification", "formal_evaluation_status", "champion_status",
               "test_only", "experimental", "production_ready", "strength_claim",
               "public_self_supported", "input_contract", "output_contract",
-              "wire_input_contract", "wire_output_contract", "capabilities"}
+              "wire_input_contract", "wire_output_contract", "capabilities",
+              "requested_device", "actual_device", "device_fallback", "device_reason",
+              "torch_cuda_build", "device_evidence"}
     clean: dict[str, Any] = {}
     for key, item in value.items():
         if key not in fields:
             continue
         if type(item) is bool or isinstance(item, str) and len(item) <= 128 and all(c.isalnum() or c in "._:+-" for c in item):
+            clean[key] = item
+        elif key == "iteration" and type(item) is int and 0 <= item < 2**31:
             clean[key] = item
         elif key == "capabilities" and isinstance(item, Mapping):
             capabilities = {str(name): flag for name, flag in item.items()

@@ -14,7 +14,10 @@ from guance.presentation.viewmodel import GuanceViewModel
 from guance.public_state_contract import guandan_card_id_to_wire
 from tests.protocol.test_live_protocol import aggregate, field, record, varint
 
-SOURCE = Path(r"D:\project\guandan")
+# Frozen materialized runtime source (hash-verified GD-RULES, Phase 2 evidence);
+# the live Guandan worktree is deliberately never used as a rules/runtime root.
+SOURCE = Path(r"D:\project\guance\build\acceptance\guance-model-platform-20261016"
+              r"\phase2\runtime\marvel-e5c82e7c-d7acbc8d\source")
 pytestmark = pytest.mark.skipif(not SOURCE.is_dir(), reason="verified Guandan source unavailable")
 SENTINEL = (1 << 64) - 1
 
@@ -468,5 +471,92 @@ def test_terminal_connection_epoch_switch_starts_independent_previous_result_sco
     driver.send(3004, start_body(1), connection="second-connection")
     assert driver.engine.paused is False
     assert subset.continuous_chain is None
+    assert subset.model_adapter_eligible_count == 0
+    assert subset.drain_decisions() == ()
+
+
+def _pass_until_free_engine(driver: EngineDriver) -> None:
+    while True:
+        state = driver.engine.state
+        assert state is not None
+        if state.phase == "ended" or state.free_lead:
+            return
+        actor = state.current_seat
+        assert actor is not None
+        next_actor, reset = _next_after_pass(state, actor)
+        driver.send(3006, pass_body(actor, next_actor, reset=reset))
+
+
+def _second_eligible_game(driver: EngineDriver) -> None:
+    """Fixed synthetic second game that reaches an observer decision opportunity."""
+    _first_settled_game(driver)
+
+    def rank_ids(rank: int) -> list[int]:
+        base = (rank - 3) * 4
+        return [base, base + 1, base + 2, base + 3,
+                base + 54, base + 55, base + 56, base + 57]
+
+    deck = list(range(108))
+    bombs = [rank_ids(rank)[:6] for rank in (3, 4, 6, 8)]
+    observer_initial = [card for group in bombs for card in group] + [24, 28, 53]
+    assert len(observer_initial) == len(set(observer_initial)) == 27
+    remaining = [card for card in deck if card not in observer_initial]
+    seat0 = [16] + [card for card in remaining if card != 16][:26]
+    left = [card for card in remaining if card not in seat0]
+    seat2, seat3 = left[:27], left[27:54]
+    assert len(seat0) == len(seat2) == len(seat3) == 27
+
+    tribute_id, return_id = 53, 16
+    observer_after_tribute = [card for card in observer_initial if card != tribute_id]
+    seat0_after_exchange = [card for card in seat0 if card != return_id] + [tribute_id]
+
+    driver.send(3001, deal_body(observer_initial))
+    driver.send(3019, observer_body(1, observer_initial))
+    driver.send(3011, exchange_init_body())
+    driver.send(3012, tribute_3012(1, tribute_id, 0, observer_after_tribute))
+    driver.send(3013, tribute_3013(1, tribute_id, 0))
+    driver.send(3014, return_3014(0, return_id, 1, seat0_after_exchange))
+    driver.send(3015, summary_3015(tribute_id, 1, return_id, 0))
+    driver.send(3002, information_3002_body())
+    driver.send(3004, start_body(1))
+
+    plays = [*bombs, [16], [24], [28]]
+    remaining_count = 27
+    for index, cards in enumerate(plays):
+        remaining_count -= len(cards)
+        final = index + 1 == len(plays)
+        driver.send(3005, play_body(
+            1, 0, cards, remaining=remaining_count,
+            combo=10 if len(cards) == 6 else 1,
+            finish=1 if final else None,
+        ))
+        _pass_until_free_engine(driver)
+    state = driver.engine.state
+    assert state is not None and state.phase in {"active", "ended"}
+
+
+def test_runtime_session_binding_produces_decisions_without_capture_evidence():
+    """The recommendation producer is enabled by the runtime session, not by debug files."""
+    subset, driver = _negative_engine()
+    assert subset.decision_session_id == ""
+    assert subset.model_adapter_eligible_count == 0
+    subset.bind_runtime_session("runtime-session")
+    assert subset.decision_session_id == "runtime-session"
+    _second_eligible_game(driver)
+    assert subset.model_adapter_eligible_count >= 1
+    decisions = subset.drain_decisions()
+    assert decisions
+    assert all(decision.capture_id == "runtime-session" for decision in decisions)
+    assert subset.drain_decisions() == ()
+    # Unbinding the runtime session stops decision production even though the
+    # capture binding API was never used (evidence recording stays independent).
+    subset.unbind_runtime_session()
+    assert subset.decision_session_id == ""
+    assert subset.drain_decisions() == ()
+
+
+def test_unbound_provider_produces_no_decisions_for_the_same_eligible_sequence():
+    subset, driver = _negative_engine()
+    _second_eligible_game(driver)
     assert subset.model_adapter_eligible_count == 0
     assert subset.drain_decisions() == ()

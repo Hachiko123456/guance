@@ -7,8 +7,10 @@ import threading
 from typing import Any
 
 from guance.contracts import (
-    CanonicalAdviceResult, CanonicalPublicGameView, GameObservation, ModelContractError,
-    ModelLifecycleState, ModelStatusSnapshot, decode_canonical_advice,
+    CanonicalAdviceResult, CanonicalPublicGameView, ConfirmedDecisionRecommendationRequest,
+    GameObservation, ModelContractError, ModelLifecycleState, ModelRecommendationRequest,
+    ModelStatusSnapshot, PublicRecommendationRequest, RequestIdentity,
+    decode_canonical_advice,
 )
 from guance.ports.model import (
     MODEL_MESSAGES, ModelBackendError, ModelClient, ModelClientFactory, ModelSource,
@@ -27,11 +29,15 @@ class ModelService:
     def __init__(self, source: ModelSource | None = None, *,
                  on_result: ResultCallback | None = None, on_status: StatusCallback | None = None,
                  client_factory: ModelClientFactory | None = None,
-                 timeout_seconds: float = 2.0, threads: int = 2) -> None:
+                 timeout_seconds: float = 2.0, threads: int = 2,
+                 requested_device: str = "auto") -> None:
+        if requested_device not in ("auto", "cpu", "cuda"):
+            raise ModelBackendError("MODEL_INPUT_INVALID")
         self._on_result = on_result or (lambda result: None)
         self._on_status = on_status or (lambda status: None)
         self._factory = client_factory if client_factory is not None else unavailable_client_factory
         self._timeout, self._threads = timeout_seconds, threads
+        self._requested_device = requested_device
         self._lock = threading.RLock()
         self._calls = threading.RLock()
         self._client: ModelClient | None = None
@@ -224,7 +230,8 @@ class ModelService:
             client = self._factory(selected,
                 on_result=lambda result: self._receive_result(epoch, result),
                 on_status=lambda status: self._receive_status(epoch, status),
-                timeout_seconds=self._timeout, threads=self._threads)
+                timeout_seconds=self._timeout, threads=self._threads,
+                requested_device=self._requested_device)
             with self._lock:
                 accepted = not self._closed and not self._selection_failed and epoch == self._epoch
                 if accepted:
@@ -258,6 +265,40 @@ class ModelService:
             self._calls.release()
 
     def submit(self, observation: GameObservation | CanonicalPublicGameView) -> None:
+        try:
+            view = (CanonicalPublicGameView.from_observation(observation)
+                    if isinstance(observation, GameObservation) else observation)
+            view = CanonicalPublicGameView.from_dict(view.to_dict())
+        except Exception as exc:
+            self.fail_selection(public_error(exc, 'MODEL_INPUT_INVALID')['error_code'])
+            return
+        request = PublicRecommendationRequest(
+            RequestIdentity("", view.session_id, view.game_id, view.state_version), view)
+        self._submit_request(request, timeout_seconds=None)
+
+    def submit_confirmed(self, decision: Mapping[str, Any], *,
+                         timeout_seconds: float | None = None) -> None:
+        """Submit one bounded confirmed-decision request (MARVEL family).
+
+        Structural validation happens here; the provider-side strict parser
+        re-validates the whole payload before any model work.
+        """
+        try:
+            if not isinstance(decision, Mapping):
+                raise ModelContractError('MODEL_INPUT_INVALID')
+            request = ConfirmedDecisionRecommendationRequest(
+                RequestIdentity("", str(decision.get("session_id", "")),
+                                str(decision.get("game_id", "")),
+                                decision.get("state_version")),
+                dict(decision))
+            request.validate()
+        except Exception as exc:
+            self.fail_selection(public_error(exc, 'MODEL_INPUT_INVALID')['error_code'])
+            return
+        self._submit_request(request, timeout_seconds=timeout_seconds)
+
+    def _submit_request(self, request: ModelRecommendationRequest, *,
+                        timeout_seconds: float | None) -> None:
         with self._lock:
             if self._closed:
                 return
@@ -271,9 +312,6 @@ class ModelService:
             self._receive_status(epoch, {'model_status': 'unavailable', 'error_code': 'MODEL_NOT_LOADED'})
             return
         try:
-            view = (CanonicalPublicGameView.from_observation(observation)
-                    if isinstance(observation, GameObservation) else observation)
-            view = CanonicalPublicGameView.from_dict(view.to_dict())
             with self._lock:
                 if self._closed or self._selection_failed or epoch != self._epoch:
                     return
@@ -281,7 +319,7 @@ class ModelService:
                 token = self._submission_token
                 self._pending_submission = token
                 self._early_result = None
-                self._latest_key = view.key
+                self._latest_key = request.identity.key
                 self._latest_request_id = None
             if not self._calls.acquire(timeout=2.0):
                 self.fail_selection('MODEL_SELECTION_BUSY', epoch=epoch)
@@ -290,7 +328,7 @@ class ModelService:
                 with self._lock:
                     if self._closed or self._selection_failed or epoch != self._epoch:
                         return
-                request_id = client.submit(view)
+                request_id = client.submit(request, timeout_seconds=timeout_seconds)
             finally:
                 self._calls.release()
             early = None

@@ -33,8 +33,8 @@ class ControlledClient:
         self.started += 1
         self.ready()
 
-    def submit(self, view):
-        self.submitted.append(view)
+    def submit(self, request, *, timeout_seconds=None):
+        self.submitted.append(request.view)
         return 'request'
 
     def reply(self, view):

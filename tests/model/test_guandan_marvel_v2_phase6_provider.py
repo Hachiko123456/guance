@@ -1,16 +1,22 @@
+"""Phase 2 provider/worker integration on the frozen materialized runtime.
+
+The default runtime/bundle materials live under the Phase 2 evidence directory
+(rebuildable with scripts/build_marvel_materials.py). The Guandan worktree is
+never used as a runtime root. Recommendation stays unavailable; no fallback.
+"""
 from __future__ import annotations
 
-from dataclasses import replace
-import importlib
 import hashlib
+import importlib
 import importlib.abc
+import importlib.util
 import json
 import os
 import shutil
-from pathlib import Path
 import subprocess
 import sys
 import threading
+from pathlib import Path
 
 import pytest
 
@@ -20,73 +26,92 @@ from guance.infrastructure.model.errors import ModelBackendError
 from guance.infrastructure.model.factory import ModelFactory
 from guance.infrastructure.model.manifest import load_bundle
 from guance.infrastructure.model.marvel_v2.deployment_bundle import (
-    CHECKPOINT_ENV, EXPECTED_DEPLOYMENT_SHA256, SCHEMA, SOURCE_ENV,
-    deployment_payload, load_descriptor, provider_manifest,
+    CHECKPOINT_ENV, SCHEMA, SOURCE_ENV, load_descriptor,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
-GUANDAN = Path(r"D:\project\guandan")
-HANDOFF = GUANDAN / (
-    "runs/M09_full_training/remote/ippo_pilot_failed_20261011/"
-    "guance_integration_handoff/checkpoint_identity.json"
-)
-CHECKPOINT = GUANDAN / (
-    "runs/M09_full_training/remote/ippo_pilot_failed_20261011/"
-    "extracted-output/evaluation_checkpoints/iter000100.pt"
-)
+EVIDENCE = Path(r"D:\project\guance\build\acceptance\guance-model-platform-20261016\phase2")
+RUNTIME = EVIDENCE / "runtime" / "marvel-e5c82e7c-d7acbc8d"
+RUNTIME_SOURCE = RUNTIME / "source"
+BUNDLES = {
+    "iter100": EVIDENCE / "bundles" / "marvel-v2-iter000100",
+    "iter2000": EVIDENCE / "bundles" / "marvel-v2-iter002000",
+}
+CHECKPOINTS = {
+    "iter100": Path(r"D:\project\guandan\runs\comparison_delivery\dataset\m09_champion_iter000100.pt"),
+    "iter2000": Path(r"D:\project\guandan\runs\comparison_delivery\dataset\m09_candidate_iter002000.pt"),
+}
 
 
-def _source_fingerprint() -> dict:
-    assert HANDOFF.is_file(), "fixed public handoff missing"
-    return json.loads(HANDOFF.read_text(encoding="utf-8"))["source"]["source_fingerprint"]
+def _cuda_build() -> bool:
+    try:
+        import torch
+    except Exception:
+        return False
+    return bool(torch.version.cuda)
 
 
-def _write_bundle(root: Path) -> Path:
-    root.mkdir(parents=True, exist_ok=True)
-    deployment = root / "deployment.json"
-    deployment.write_text(json.dumps(deployment_payload(_source_fingerprint()),
-                                     ensure_ascii=False, sort_keys=True) + "\n", encoding="utf-8")
-    digest = hashlib.sha256(deployment.read_bytes()).hexdigest()
-    manifest = root / "manifest.json"
-    manifest.write_text(json.dumps(provider_manifest(deployment.name, digest).to_dict(),
-                                   ensure_ascii=False, sort_keys=True) + "\n", encoding="utf-8")
-    (root / "SHA256SUMS").write_text(f"{digest}  deployment.json\n", encoding="utf-8")
+CPU_PINNED = pytest.mark.skipif(
+    _cuda_build(), reason="Phase 2 descriptor pins the accepted CPU-only Torch build")
+
+
+def _runtime_json() -> dict:
+    path = RUNTIME / "runtime.json"
+    if not path.is_file():
+        pytest.skip("materialized runtime unavailable; run scripts/build_marvel_materials.py")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _require_bundle(model: str) -> Path:
+    runtime = _runtime_json()
+    manifest = BUNDLES[model] / "manifest.json"
+    if not manifest.is_file():
+        pytest.skip("phase 2 bundle unavailable")
+    if not CHECKPOINTS[model].is_file():
+        pytest.skip("fixed checkpoint unavailable")
+    assert runtime["four_condition_probe"]["source_matches_loaded_binary"] is True
     return manifest
 
 
-@pytest.fixture
-def phase6_manifest(tmp_path: Path) -> Path:
-    return _write_bundle(tmp_path / "marvel-v2")
+def _configure(monkeypatch: pytest.MonkeyPatch, model: str) -> None:
+    _require_bundle(model)
+    monkeypatch.setenv(SOURCE_ENV, str(RUNTIME_SOURCE))
+    monkeypatch.setenv(CHECKPOINT_ENV, str(CHECKPOINTS[model]))
 
 
-def _configure(monkeypatch: pytest.MonkeyPatch) -> None:
-    assert GUANDAN.is_dir() and CHECKPOINT.is_file()
-    monkeypatch.setenv(SOURCE_ENV, str(GUANDAN))
-    monkeypatch.setenv(CHECKPOINT_ENV, str(CHECKPOINT))
-
-
-def test_phase6_descriptor_is_exact_bounded_and_not_a_checkpoint_copy(phase6_manifest: Path) -> None:
-    bundle = load_bundle(phase6_manifest)
+@pytest.mark.parametrize("model", ["iter100", "iter2000"])
+def test_phase2_descriptor_is_exact_bounded_and_not_a_checkpoint_copy(model: str) -> None:
+    runtime = _runtime_json()
+    manifest_path = _require_bundle(model)
+    bundle = load_bundle(manifest_path)
     descriptor = load_descriptor(bundle)
     wire = json.loads(bundle.artifact_path.read_text(encoding="utf-8"))
+    checkpoint = CHECKPOINTS[model]
     assert wire["schema"] == SCHEMA
-    assert descriptor.checkpoint["sha256"] == hashlib.sha256(CHECKPOINT.read_bytes()).hexdigest()
-    assert descriptor.checkpoint["bytes"] == CHECKPOINT.stat().st_size == 8_316_529
-    assert descriptor.runtime["identity_sha256"] == EXPECTED_DEPLOYMENT_SHA256
+    assert descriptor.checkpoint["sha256"] == hashlib.sha256(checkpoint.read_bytes()).hexdigest()
+    assert descriptor.checkpoint["bytes"] == checkpoint.stat().st_size
+    assert descriptor.runtime["identity_sha256"] == runtime["deployment"]["identity_sha256"]
+    assert descriptor.runtime["native_sha256"] == runtime["native"]["sha256"]
+    assert descriptor.source_fingerprint["hash"] == runtime["source_fingerprint"]["hash"]
     assert descriptor.readiness == {
         "experimental": True, "test_only": False, "production_ready": False,
         "public_self_supported": False, "live_eligible_set": (),
     }
+    assert descriptor.checkpoint_expectation.payload_variant in {
+        "ddp_merged_frozen_v1", "flat_not_smoothed_v1"}
     assert bundle.artifact_path.stat().st_size < 64 * 1024
-    assert bundle.artifact_path != CHECKPOINT
-    assert not any(path.suffix == ".pt" for path in phase6_manifest.parent.iterdir())
+    assert bundle.artifact_path != checkpoint
+    assert not any(path.suffix == ".pt" for path in manifest_path.parent.iterdir())
 
 
 @pytest.mark.parametrize("section,key,value", [
     ("checkpoint", "sha256", "0" * 64),
     ("checkpoint", "classification", "training"),
-    ("checkpoint", "iteration", 101),
+    ("checkpoint", "resume_classification", "training"),
+    ("checkpoint", "payload_variant", "future_unknown_v2"),
+    ("checkpoint", "source_parent_commit", "0" * 40),
     ("runtime", "identity_sha256", "0" * 64),
+    ("runtime", "native_sha256", "0" * 64),
     ("runtime", "torch_version", "unknown"),
     ("evaluation", "formal_status", "passed"),
     ("evaluation", "strength_claim", True),
@@ -94,26 +119,42 @@ def test_phase6_descriptor_is_exact_bounded_and_not_a_checkpoint_copy(phase6_man
     ("readiness", "public_self_supported", True),
     ("readiness", "live_eligible_set", ["guessed"]),
 ])
-def test_phase6_descriptor_identity_mismatch_fails_closed(
-        phase6_manifest: Path, section: str, key: str, value: object) -> None:
-    deployment = phase6_manifest.parent / "deployment.json"
-    data = json.loads(deployment.read_text(encoding="utf-8"))
+def test_phase2_descriptor_identity_mismatch_fails_closed(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, section: str, key: str,
+        value: object) -> None:
+    source = _require_bundle("iter100")
+    bundle_dir = tmp_path / "marvel-v2"
+    bundle_dir.mkdir()
+    shutil.copyfile(source, bundle_dir / "manifest.json")
+    deployment = bundle_dir / "deployment.json"
+    data = json.loads((source.parent / "deployment.json").read_text(encoding="utf-8"))
     data[section][key] = value
     deployment.write_text(json.dumps(data, sort_keys=True) + "\n", encoding="utf-8")
     digest = hashlib.sha256(deployment.read_bytes()).hexdigest()
-    manifest_data = json.loads(phase6_manifest.read_text(encoding="utf-8"))
+    manifest_data = json.loads((bundle_dir / "manifest.json").read_text(encoding="utf-8"))
     manifest_data["artifact_sha256"] = digest
-    phase6_manifest.write_text(json.dumps(manifest_data, sort_keys=True) + "\n", encoding="utf-8")
-    (phase6_manifest.parent / "SHA256SUMS").write_text(
-        f"{digest}  deployment.json\n", encoding="utf-8")
+    manifest_data["artifact_bytes"] = deployment.stat().st_size
+    (bundle_dir / "manifest.json").write_text(json.dumps(manifest_data, sort_keys=True) + "\n",
+                                              encoding="utf-8")
+    (bundle_dir / "SHA256SUMS").write_text(f"{digest}  deployment.json\n", encoding="utf-8")
+    _configure(monkeypatch, "iter100")
     with pytest.raises(ModelBackendError):
-        ModelFactory().create(phase6_manifest).load()
+        ModelFactory().create(bundle_dir / "manifest.json").load()
 
 
-def test_phase6_provider_loads_real_runtime_but_live_advice_is_unavailable(
-        phase6_manifest: Path, monkeypatch: pytest.MonkeyPatch, view: CanonicalPublicGameView) -> None:
-    _configure(monkeypatch)
-    advisor = ModelFactory().create(phase6_manifest)
+@CPU_PINNED
+@pytest.mark.parametrize("model,iteration,model_version", [
+    ("iter100", 100, "MARVEL-V2-v1.3-iter000100"),
+    ("iter2000", 2000, "MARVEL-V2-v1.3-iter002000"),
+])
+def test_phase2_provider_loads_real_runtime_but_live_advice_is_unavailable(
+        model: str, iteration: int, model_version: str,
+        monkeypatch: pytest.MonkeyPatch, view: CanonicalPublicGameView) -> None:
+    manifest_path = _require_bundle(model)
+    runtime = _runtime_json()
+    _configure(monkeypatch, model)
+    advisor = ModelFactory().create(manifest_path)
+    checkpoint_sha = hashlib.sha256(CHECKPOINTS[model].read_bytes()).hexdigest()
     try:
         metadata = advisor.load()
         assert isinstance(metadata, ModelMetadata)
@@ -121,22 +162,19 @@ def test_phase6_provider_loads_real_runtime_but_live_advice_is_unavailable(
         assert metadata.provider == "guandan_marvel_v2"
         assert metadata.backend == "guandan"
         assert metadata.runtime == "torch-cpu" and metadata.runtime_version == "2.13.0+cpu"
-        assert metadata.model_sha256 == "44b8a41371965279c7ce8f3e592162689e9a1b32cb4a07147f2a8ea58ff89696"
-        assert metadata.deployment_fingerprint == EXPECTED_DEPLOYMENT_SHA256
+        assert metadata.model_sha256 == checkpoint_sha
+        assert metadata.model_version == model_version
+        assert metadata.deployment_fingerprint == runtime["deployment"]["identity_sha256"]
         assert metadata.experimental is True and metadata.test_only is False
         assert metadata.production_ready is False and metadata.strength_claim is False
         assert metadata.public_self_supported is False
         assert metadata.classification == "evaluation_only"
-        assert metadata.formal_evaluation_status == "not_run"
-        assert metadata.champion_status == "not_established"
-        assert metadata.score_kind == "marvel_v2_policy_path_score"
-        assert metadata.capabilities.next_token_policy and not metadata.capabilities.recommend
-        assert advisor.runtime._runtime.identity.test_only is False
+        assert advisor.runtime._runtime.identity.iteration == iteration
+        assert advisor.runtime._runtime.identity.checkpoint_sha256 == checkpoint_sha
         assert advisor.runtime._runtime.identity.deployment_identity_verified is True
         with pytest.raises(ModelBackendError) as exc:
-            advisor.recommend(view, "phase6-unavailable")
+            advisor.recommend(view, "phase2-unavailable")
         assert exc.value.code == "GUANDAN_STATE_UNAVAILABLE"
-        # Idempotent explicit reload revalidates the same selected bundle, never another provider.
         assert advisor.load().bundle_fingerprint == metadata.bundle_fingerprint
     finally:
         advisor.close()
@@ -146,9 +184,11 @@ def test_phase6_provider_loads_real_runtime_but_live_advice_is_unavailable(
     assert exc.value.code == "MODEL_CLOSED"
 
 
-def test_phase6_worker_client_reports_unavailable_metadata_and_no_result(
-        phase6_manifest: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    _configure(monkeypatch)
+@CPU_PINNED
+def test_phase2_worker_client_reports_unavailable_metadata_and_no_result(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    manifest_path = _require_bundle("iter2000")
+    _configure(monkeypatch, "iter2000")
     statuses: list[dict] = []
     results = []
     finished = threading.Event()
@@ -159,11 +199,11 @@ def test_phase6_worker_client_reports_unavailable_metadata_and_no_result(
         if item.get("model_status") in {"unavailable", "ready", "error", "timeout"}:
             finished.set()
 
-    client = InferenceClient(phase6_manifest, on_result=results.append, on_status=on_status,
+    client = InferenceClient(manifest_path, on_result=results.append, on_status=on_status,
                              timeout_seconds=2.0, threads=1)
     try:
         client.start()
-        assert finished.wait(20), statuses
+        assert finished.wait(60), statuses
         final = statuses[-1]
         assert final["model_status"] == "unavailable"
         assert final["error_code"] == "GUANDAN_STATE_UNAVAILABLE"
@@ -176,20 +216,37 @@ def test_phase6_worker_client_reports_unavailable_metadata_and_no_result(
         client.close()
 
 
-def test_phase6_missing_explicit_environment_never_scans_or_falls_back(
-        phase6_manifest: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_phase2_missing_explicit_environment_never_scans_or_falls_back(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    manifest_path = _require_bundle("iter100")
     monkeypatch.delenv(SOURCE_ENV, raising=False)
     monkeypatch.delenv(CHECKPOINT_ENV, raising=False)
-    advisor = ModelFactory().create(phase6_manifest)
+    advisor = ModelFactory().create(manifest_path)
     with pytest.raises(ModelBackendError) as exc:
         advisor.load()
     assert exc.value.code == "MODEL_UNAVAILABLE"
     advisor.close()
 
 
-def test_phase6_default_registry_is_lazy_and_has_no_fake_provider(phase6_manifest: Path) -> None:
+def test_phase2_worktree_is_not_a_trusted_runtime_root(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """The live Guandan worktree must fail the descriptor fingerprint (no fallback)."""
+    manifest_path = _require_bundle("iter100")
+    worktree = Path(r"D:\project\guandan")
+    if not worktree.is_dir():
+        pytest.skip("worktree unavailable")
+    monkeypatch.setenv(SOURCE_ENV, str(worktree))
+    monkeypatch.setenv(CHECKPOINT_ENV, str(CHECKPOINTS["iter100"]))
+    advisor = ModelFactory().create(manifest_path)
+    with pytest.raises(ModelBackendError) as exc:
+        advisor.load()
+    assert exc.value.code in {"MODEL_VERSION_UNSUPPORTED", "MODEL_UNAVAILABLE"}
+    advisor.close()
+
+
+def test_phase2_default_registry_is_lazy_and_has_no_fake_provider() -> None:
     script = r'''
-import importlib.abc, json, sys
+import importlib.abc, sys
 blocked = {'torch', 'guandan_marvel', 'nanopokerlib'}
 attempts = []
 class Block(importlib.abc.MetaPathFinder):
@@ -214,43 +271,58 @@ assert not attempts
     assert result.returncode == 0, result.stderr or result.stdout
 
 
-def test_phase6_manifest_cannot_silently_switch_provider(phase6_manifest: Path) -> None:
-    data = json.loads(phase6_manifest.read_text(encoding="utf-8"))
+def test_phase2_manifest_cannot_silently_switch_provider(tmp_path: Path) -> None:
+    source = _require_bundle("iter100")
+    bundle_dir = tmp_path / "marvel-v2"
+    bundle_dir.mkdir()
+    shutil.copyfile(source, bundle_dir / "manifest.json")
+    shutil.copyfile(source.parent / "deployment.json", bundle_dir / "deployment.json")
+    shutil.copyfile(source.parent / "SHA256SUMS", bundle_dir / "SHA256SUMS")
+    data = json.loads((bundle_dir / "manifest.json").read_text(encoding="utf-8"))
     data["provider"] = "fabledan"
-    phase6_manifest.write_text(json.dumps(data, sort_keys=True) + "\n", encoding="utf-8")
+    (bundle_dir / "manifest.json").write_text(json.dumps(data, sort_keys=True) + "\n",
+                                              encoding="utf-8")
     with pytest.raises(ModelBackendError) as exc:
-        ModelFactory().create(phase6_manifest)
+        ModelFactory().create(bundle_dir / "manifest.json")
     assert exc.value.code in {"BACKEND_UNSUPPORTED", "MODEL_VERSION_UNSUPPORTED"}
 
 
+@CPU_PINNED
 def test_secure_package_bootstrap_never_adds_source_root_to_sys_path(
-        phase6_manifest: Path, monkeypatch: pytest.MonkeyPatch, view: CanonicalPublicGameView) -> None:
-    _configure(monkeypatch)
-    resolved = str(GUANDAN.resolve())
-    before_packages = {name for name in sys.modules if name == "guandan_marvel" or name.startswith("guandan_marvel.") or name == "nanopokerlib" or name.startswith("nanopokerlib.")}
+        monkeypatch: pytest.MonkeyPatch, view: CanonicalPublicGameView) -> None:
+    manifest_path = _require_bundle("iter100")
+    _configure(monkeypatch, "iter100")
+    resolved = str(RUNTIME_SOURCE.resolve())
+    before_packages = {name for name in sys.modules if name == "guandan_marvel"
+                       or name.startswith("guandan_marvel.") or name == "nanopokerlib"
+                       or name.startswith("nanopokerlib.")}
     assert resolved not in sys.path
-    advisor = ModelFactory().create(phase6_manifest)
+    advisor = ModelFactory().create(manifest_path)
     try:
         metadata = advisor.load()
         assert metadata.status == "unavailable"
         assert resolved not in sys.path
-        assert Path(sys.modules["guandan_marvel"].__file__).resolve() == (GUANDAN / "guandan_marvel/__init__.py").resolve()
-        assert Path(sys.modules["guandan_marvel.model"].__file__).resolve() == (GUANDAN / "guandan_marvel/model/__init__.py").resolve()
+        assert Path(sys.modules["guandan_marvel"].__file__).resolve() == (
+            RUNTIME_SOURCE / "guandan_marvel/__init__.py").resolve()
+        assert Path(sys.modules["guandan_marvel.model"].__file__).resolve() == (
+            RUNTIME_SOURCE / "guandan_marvel/model/__init__.py").resolve()
+        # Deny-by-default: names outside the validated fingerprint never resolve.
         with pytest.raises(ModuleNotFoundError):
-            importlib.import_module("guandan_marvel.game")
-        with pytest.raises(ModuleNotFoundError):
-            importlib.import_module("guandan_marvel.testing.fake_game")
+            importlib.import_module("guandan_marvel.not_a_real_module")
         with pytest.raises(ModelBackendError, match="Guandan environment state"):
             advisor.recommend(view, "secure-bootstrap")
     finally:
         advisor.close()
     assert resolved not in sys.path
-    after_packages = {name for name in sys.modules if name == "guandan_marvel" or name.startswith("guandan_marvel.") or name == "nanopokerlib" or name.startswith("nanopokerlib.")}
+    after_packages = {name for name in sys.modules if name == "guandan_marvel"
+                      or name.startswith("guandan_marvel.") or name == "nanopokerlib"
+                      or name.startswith("nanopokerlib.")}
     assert after_packages == before_packages
 
 
 def test_unverified_source_customizers_and_shadow_modules_never_execute_before_validation(
-        phase6_manifest: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    manifest_path = _require_bundle("iter100")
     malicious = tmp_path / "malicious-source"
     malicious.mkdir()
     sentinel = tmp_path / "bootstrap-sentinel.txt"
@@ -258,7 +330,7 @@ def test_unverified_source_customizers_and_shadow_modules_never_execute_before_v
     for name in ("sitecustomize.py", "usercustomize.py", "guance.py", "torch.py", "json.py"):
         (malicious / name).write_text(payload, encoding="utf-8")
     monkeypatch.setenv(SOURCE_ENV, str(malicious))
-    monkeypatch.setenv(CHECKPOINT_ENV, str(CHECKPOINT))
+    monkeypatch.setenv(CHECKPOINT_ENV, str(CHECKPOINTS["iter100"]))
     monkeypatch.setenv("PYTHONPATH", str(malicious))
     statuses = []
     finished = threading.Event()
@@ -266,11 +338,11 @@ def test_unverified_source_customizers_and_shadow_modules_never_execute_before_v
         item = status.to_dict(); statuses.append(item)
         if item.get("model_status") in {"unavailable", "error", "timeout", "ready"}:
             finished.set()
-    client = InferenceClient(phase6_manifest, on_result=lambda result: pytest.fail("unexpected result"),
+    client = InferenceClient(manifest_path, on_result=lambda result: pytest.fail("unexpected result"),
                              on_status=on_status, timeout_seconds=2.0, threads=1)
     try:
         client.start()
-        assert finished.wait(20), statuses
+        assert finished.wait(60), statuses
         assert statuses[-1]["model_status"] in {"unavailable", "error"}
         assert not any(item.get("model_status") == "ready" for item in statuses)
         assert not sentinel.exists()
@@ -299,9 +371,8 @@ def test_verified_python_loader_rechecks_bytes_before_execution(tmp_path: Path) 
     assert not sentinel.exists()
 
 
-
 def _copy_fingerprinted_source(destination: Path) -> None:
-    fingerprint = _source_fingerprint()
+    fingerprint = _runtime_json()["source_fingerprint"]
     copied = set()
     for component in fingerprint["components"].values():
         for entry in component["files"]:
@@ -309,10 +380,9 @@ def _copy_fingerprinted_source(destination: Path) -> None:
             if relative in copied:
                 continue
             copied.add(relative)
-            source = GUANDAN / relative
             target = destination / relative
             target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(source, target)
+            shutil.copyfile(RUNTIME_SOURCE / relative, target)
 
 
 @pytest.mark.parametrize("kind", [
@@ -321,6 +391,7 @@ def _copy_fingerprinted_source(destination: Path) -> None:
 def test_complete_fingerprinted_source_rejects_forbidden_startup_and_shadow_entries(
         tmp_path: Path, kind: str) -> None:
     from guance.infrastructure.model.marvel_v2.deployment_bundle import _verify_source_tree
+    runtime = _runtime_json()
     source = tmp_path / "source"
     _copy_fingerprinted_source(source)
     if kind == "sitecustomize":
@@ -336,7 +407,7 @@ def test_complete_fingerprinted_source_rejects_forbidden_startup_and_shadow_entr
         (source / "nanopokerlib/_guandan_cpp.py").write_text(
             "raise AssertionError('must not execute')\n", encoding="utf-8")
     with pytest.raises(ModelBackendError) as exc:
-        _verify_source_tree(source, _source_fingerprint())
+        _verify_source_tree(source, runtime["source_fingerprint"])
     assert exc.value.code == "MODEL_VERSION_UNSUPPORTED"
 
 

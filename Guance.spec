@@ -91,6 +91,22 @@ TARGET_HIDDEN_IMPORTS = [
     "PySide6.QtQuick",
     "PySide6.QtQuickControls2",
     "PySide6.QtWidgets",
+    # The optional marvel-gpu profile vendors Torch at build time and imports it
+    # lazily at runtime, so PyInstaller's static analysis cannot see Torch's
+    # standard-library imports.  These pure-Python modules are imported by
+    # Torch/sympy (`timeit`, `heapq`, `pickletools`, `cProfile`, `profile`,
+    # `pstats`, `colorsys`) and would otherwise be absent from the frozen
+    # archive, turning a valid GPU load into MODEL_UNAVAILABLE.  Including them
+    # is inert for profiles that never import Torch.
+    "cProfile",
+    "colorsys",
+    "ctypes.util",
+    "heapq",
+    "pickletools",
+    "profile",
+    "pstats",
+    "timeit",
+    "unittest.mock",
 ]
 
 # QML imports used by the application:

@@ -17,14 +17,22 @@ if TYPE_CHECKING:
     from .registry import ProviderRegistry
 
 PROTOCOL_VERSION = 1  # Manifest compatibility version; worker protocol has its own version.
+CATALOG_SCHEMA_VERSION = 2  # Catalog bundles; schema 1 stays readable for legacy direct selection.
 MAX_MANIFEST_BYTES = 64 * 1024
 CAPABILITY_NAMES = frozenset({"recommend", "top_n", "complete_action", "next_token_policy",
-                              "beam_search", "belief", "search", "public_plus_self"})
+                              "confirmed_decision", "beam_search", "belief", "search",
+                              "public_plus_self"})
+CLASSIFICATION_NAMES = frozenset({"production", "production_candidate", "experimental",
+                                  "evaluation_only", "legacy"})
+READINESS_KEYS = frozenset({"experimental", "production_ready", "strength_claim"})
 _REQUIRED = frozenset({
     "schema_version", "backend", "provider", "artifact", "artifact_format", "input_contract",
     "output_contract", "model_version", "training_version", "rules_version", "action_version",
     "environment_version", "encoding_version", "algorithm", "architecture", "runtime",
     "artifact_sha256", "capabilities",
+})
+_V2_REQUIRED = frozenset({
+    "model_id", "artifact_bytes", "runtime_contract", "classification", "readiness",
 })
 _IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}\Z")
 
@@ -73,19 +81,47 @@ class ModelManifest:
     artifact_sha256: str
     capabilities: Mapping[str, bool] | tuple[str, ...]
     protocol_version: int = PROTOCOL_VERSION
+    model_id: str | None = None
+    artifact_bytes: int | None = None
+    runtime_contract: str | None = None
+    classification: str | None = None
+    readiness: Mapping[str, bool] | None = None
+
+    @property
+    def is_catalog_manifest(self) -> bool:
+        return self.schema_version == CATALOG_SCHEMA_VERSION and self.model_id is not None
 
     @classmethod
     def from_dict(cls, data: Any) -> ModelManifest:
-        if (not isinstance(data, dict) or not _REQUIRED <= data.keys()
-                or data.keys() - (_REQUIRED | {"protocol_version"})):
+        if not isinstance(data, dict) or not _REQUIRED <= data.keys():
             raise ModelBackendError("MANIFEST_INVALID")
-        if type(data["schema_version"]) is not int or data["schema_version"] != MANIFEST_SCHEMA_VERSION:
+        version = data["schema_version"]
+        if type(version) is not int or version not in (1, CATALOG_SCHEMA_VERSION):
+            raise ModelBackendError("MANIFEST_INVALID")
+        if version == CATALOG_SCHEMA_VERSION and not _V2_REQUIRED <= data.keys():
+            raise ModelBackendError("MANIFEST_INVALID")
+        allowed = _REQUIRED | {"protocol_version"}
+        if version == CATALOG_SCHEMA_VERSION:
+            allowed |= _V2_REQUIRED
+        if data.keys() - allowed:
             raise ModelBackendError("MANIFEST_INVALID")
         protocol = data.get("protocol_version", PROTOCOL_VERSION)
         if type(protocol) is not int or protocol != PROTOCOL_VERSION:
             raise ModelBackendError("PROTOCOL_UNSUPPORTED")
         for name in _REQUIRED - {"schema_version", "artifact", "artifact_sha256", "capabilities"}:
             if not isinstance(data[name], str) or not _IDENTIFIER.fullmatch(data[name]):
+                raise ModelBackendError("MANIFEST_INVALID")
+        if version == CATALOG_SCHEMA_VERSION:
+            for name in ("model_id", "runtime_contract"):
+                if not isinstance(data[name], str) or not _IDENTIFIER.fullmatch(data[name]):
+                    raise ModelBackendError("MANIFEST_INVALID")
+            if (type(data["artifact_bytes"]) is not int or not 0 < data["artifact_bytes"] < 2**63):
+                raise ModelBackendError("MANIFEST_INVALID")
+            if data["classification"] not in CLASSIFICATION_NAMES:
+                raise ModelBackendError("MANIFEST_INVALID")
+            readiness = data["readiness"]
+            if (not isinstance(readiness, Mapping) or set(readiness) != READINESS_KEYS
+                    or any(type(value) is not bool for value in readiness.values())):
                 raise ModelBackendError("MANIFEST_INVALID")
         # Contract identifiers are syntactic here. The selected provider declares
         # compatibility; a future registered ACL need not use the same input identifier.
@@ -109,12 +145,25 @@ class ModelManifest:
         else:
             raise ModelBackendError("MANIFEST_INVALID")
         _relative_artifact(data["artifact"])
-        return cls(**{**data, "capabilities": normalized_caps, "protocol_version": protocol})
+        extras: dict[str, Any] = {}
+        if version == CATALOG_SCHEMA_VERSION:
+            extras = {"model_id": data["model_id"], "artifact_bytes": data["artifact_bytes"],
+                      "runtime_contract": data["runtime_contract"],
+                      "classification": data["classification"],
+                      "readiness": MappingProxyType(dict(data["readiness"]))}
+        return cls(**{**data, **extras, "capabilities": normalized_caps, "protocol_version": protocol})
 
     def to_dict(self) -> dict[str, Any]:
-        result = {field.name: getattr(self, field.name) for field in fields(self)}
+        result: dict[str, Any] = {}
+        for field_ in fields(self):
+            value = getattr(self, field_.name)
+            if value is None:
+                continue
+            result[field_.name] = value
         result["capabilities"] = (dict(sorted(self.capabilities.items()))
                                   if isinstance(self.capabilities, Mapping) else list(self.capabilities))
+        if self.readiness is not None:
+            result["readiness"] = dict(sorted(self.readiness.items()))
         return result
 
 
@@ -151,6 +200,9 @@ class ModelBundle:
         artifact = self.artifact_path
         if not artifact.is_file():
             raise ModelBackendError("ARTIFACT_MISSING")
+        if (self.manifest.artifact_bytes is not None
+                and artifact.stat().st_size != self.manifest.artifact_bytes):
+            raise ModelBackendError("ARTIFACT_SIZE_MISMATCH")
         digest = sha256_file(artifact)
         if digest != self.manifest.artifact_sha256:
             raise ModelBackendError("ARTIFACT_HASH_MISMATCH")

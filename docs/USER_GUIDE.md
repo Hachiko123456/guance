@@ -17,7 +17,7 @@ Guance 是开发版建议工具，不会替用户点击或出牌。真实采集�
 
 ## Demo 与真实运行
 
-离线 Demo 只适合查看 UI 和状态展示。当前 CLI `--demo` 参数的解析与 GUI 消费存在版本差异，不能以命令行参数本身保证隔离演示；请以界面中的明确演示入口和测试结果为准。
+离线 Demo 只适合查看 UI 和状态展示。当前 CLI `--demo` 参数的解析与 GUI 消费存在版本差异，不能以命令行参数本身保证隔离演示；请以界面中的明确演示入口和测试结果为准。`--frozen-smoke` 是包验收用的有界无网络入口，不是用户演示模式，也不能证明真实模型推荐显示。
 
 真实运行前确认：
 
@@ -26,6 +26,25 @@ Guance 是开发版建议工具，不会替用户点击或出牌。真实采集�
 - 当前代理状态允许恢复；
 - 你有权读取自己的授权环境；
 - 你知道停止按钮会先恢复原代理。
+
+## 离线评估包
+
+由当前源码构建的 fresh no-capture 评估包只用于本地离线评估：
+
+- 不包含采集 helper，界面会显示采集组件不可用；不会回退到系统 mitmproxy。
+- 默认 FableDan（NumPy）可加载并给出候选；MARVEL/Torch 不在包内，明确
+  unavailable/fail-closed，不会切换成 FableDan 或别的 checkpoint。
+- 不包含自包含 GPU 支持；需要 GPU 时使用 [离线交付手册](OFFLINE_DELIVERY.md) 中的
+  源码 + 隔离 CUDA 环境。
+- `production_ready=false`、`strength_claim=false`，候选分数不是胜率。
+- `REDISTRIBUTION_NOT_AUTHORIZED`：不要上传或转发包与权重。
+
+## GPU 与 CPU
+
+默认设备策略为 `auto`：有可用 CUDA 且真实探测成功时使用 GPU，否则使用 CPU 并在
+设置页显示原因。可用 `GUANCE_MODEL_DEVICE=cpu|cuda` 强制。设备回退不是模型回退；
+强制 `cuda` 在无设备时明确失败，不会偷偷改用 CPU。详见
+[GPU 推理](GPU_INFERENCE.md)。
 
 ## 日常状态
 

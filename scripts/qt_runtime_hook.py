@@ -4,6 +4,18 @@ import os
 from pathlib import Path
 import sys
 
+# A frozen windowed executable defaults stdio to the ANSI code page. The model
+# worker JSONL contract is UTF-8 (source mode starts the worker with ``-X utf8``),
+# so enforce the same encoding here before any application import. Without this,
+# non-ASCII candidate labels are emitted as GBK and the strict UTF-8 client
+# rejects the result.
+for _stream in (sys.stdout, sys.stderr):
+    if _stream is not None and hasattr(_stream, "reconfigure"):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="strict")
+        except (LookupError, OSError, ValueError):
+            pass
+
 base = Path(getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent))
 paths = [base, base / "PySide6", base / "shiboken6"]
 _dll_dirs = []
@@ -14,6 +26,23 @@ for path in paths:
         except (AttributeError, OSError):
             pass
 os.environ["PATH"] = os.pathsep.join(str(p) for p in paths if p.is_dir()) + os.pathsep + os.environ.get("PATH", "")
+
+# The optional frozen MARVEL GPU profile vendors the already-accepted Torch/CUDA
+# runtime under ``marvel_runtime/site-packages``.  Append it (never prepend) so
+# bundled application/Qt modules keep priority, and register Torch's DLL
+# directory before the worker imports Torch lazily.  The no-capture/FableDan
+# profile does not contain this directory and is unaffected.
+_marvel_site = base / "marvel_runtime" / "site-packages"
+if _marvel_site.is_dir():
+    if str(_marvel_site) not in sys.path:
+        sys.path.append(str(_marvel_site))
+    _torch_lib = _marvel_site / "torch" / "lib"
+    if _torch_lib.is_dir():
+        try:
+            _dll_dirs.append(os.add_dll_directory(str(_torch_lib)))
+        except (AttributeError, OSError):
+            pass
+        os.environ["PATH"] = str(_torch_lib) + os.pathsep + os.environ.get("PATH", "")
 
 # Pin the controlled VC runtime and binding support DLLs before any Qt Python
 # extension imports.  This avoids AddDllDirectory's intentionally unspecified

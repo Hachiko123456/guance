@@ -11,11 +11,15 @@ from typing import Any, Protocol, TypeAlias
 from guance.contracts import (
     CanonicalAdviceResult,
     CanonicalPublicGameView,
+    ConfirmedDecisionRecommendationRequest,
     GameObservation,
     ModelCapabilities,
     ModelMetadata,
+    ModelRecommendationRequest,
     ModelStatusSnapshot,
+    PublicRecommendationRequest,
     RequestIdentity,
+    recommendation_request_kind,
 )
 
 ModelSource: TypeAlias = Path | str
@@ -33,6 +37,7 @@ MODEL_MESSAGES: Mapping[str, str] = MappingProxyType({
     "ARTIFACT_PATH_INVALID": "Model artifact must stay inside its bundle.",
     "ARTIFACT_MISSING": "Required model artifact is unavailable.",
     "ARTIFACT_HASH_MISMATCH": "Model artifact integrity check failed.",
+    "ARTIFACT_SIZE_MISMATCH": "Model artifact size does not match the manifest.",
     "SHA256SUMS_INVALID": "Model checksum manifest is invalid.",
     "PROTOCOL_UNSUPPORTED": "Model protocol version is not supported.",
     "CONTRACT_UNSUPPORTED": "Model input or output contract is not supported.",
@@ -57,6 +62,12 @@ MODEL_MESSAGES: Mapping[str, str] = MappingProxyType({
     "RESPONSE_MISMATCH": "Model response identity does not match the request.",
     "GUANDAN_STATE_UNAVAILABLE": "Public observation cannot supply the required Guandan environment state.",
     "GUANDAN_TOKEN_INVALID": "Guandan action tokens or legal mask are invalid.",
+    "MODEL_NOT_SELECTED": "还没有明确选择模型；推荐保持不可用。",
+    "ACTIVE_SELECTION_INVALID": "模型选择记录无效或其模型包已损坏；推荐已暂停，请重新选择模型。",
+    "CATALOG_MODEL_UNAVAILABLE": "所选模型不在本地模型目录中或校验失败；推荐已暂停，请刷新后重试。",
+    "CLAIM_UNSUPPORTED": "模型自报的 classification/readiness 声明未通过该 provider 的验证契约。",
+    "REQUEST_KIND_UNSUPPORTED": "所选 provider 不支持该类型的推荐请求。",
+    "CONFIRMED_DECISION_UNAVAILABLE": "严格 confirmed-decision 输入不可用；推荐已暂停。",
 })
 
 
@@ -70,6 +81,7 @@ class ModelErrorCode(str, Enum):
     ARTIFACT_PATH_INVALID = "ARTIFACT_PATH_INVALID"
     ARTIFACT_MISSING = "ARTIFACT_MISSING"
     ARTIFACT_HASH_MISMATCH = "ARTIFACT_HASH_MISMATCH"
+    ARTIFACT_SIZE_MISMATCH = "ARTIFACT_SIZE_MISMATCH"
     SHA256SUMS_INVALID = "SHA256SUMS_INVALID"
     PROTOCOL_UNSUPPORTED = "PROTOCOL_UNSUPPORTED"
     CONTRACT_UNSUPPORTED = "CONTRACT_UNSUPPORTED"
@@ -94,6 +106,12 @@ class ModelErrorCode(str, Enum):
     RESPONSE_MISMATCH = "RESPONSE_MISMATCH"
     GUANDAN_STATE_UNAVAILABLE = "GUANDAN_STATE_UNAVAILABLE"
     GUANDAN_TOKEN_INVALID = "GUANDAN_TOKEN_INVALID"
+    MODEL_NOT_SELECTED = "MODEL_NOT_SELECTED"
+    ACTIVE_SELECTION_INVALID = "ACTIVE_SELECTION_INVALID"
+    CATALOG_MODEL_UNAVAILABLE = "CATALOG_MODEL_UNAVAILABLE"
+    CLAIM_UNSUPPORTED = "CLAIM_UNSUPPORTED"
+    REQUEST_KIND_UNSUPPORTED = "REQUEST_KIND_UNSUPPORTED"
+    CONFIRMED_DECISION_UNAVAILABLE = "CONFIRMED_DECISION_UNAVAILABLE"
 
 
 class ModelBackendError(ValueError):
@@ -118,19 +136,23 @@ def public_error(error: BaseException, default: str = ModelErrorCode.MODEL_INFER
 class ModelAdvisor(Protocol):
     def load(self) -> ModelMetadata: ...
     def recommend(self, view: CanonicalPublicGameView, request_id: str) -> CanonicalAdviceResult: ...
+    def recommend_confirmed(self, decision: Mapping[str, Any],
+                            request_id: str) -> CanonicalAdviceResult: ...
     def close(self) -> None: ...
 
 
 class ModelClient(Protocol):
     def start(self) -> None: ...
-    def submit(self, observation: GameObservation | CanonicalPublicGameView) -> str | None: ...
+    def submit(self, request: ModelRecommendationRequest, *,
+               timeout_seconds: float | None = None) -> str | None: ...
     def invalidate(self) -> None: ...
     def close(self) -> None: ...
 
 
 class ModelClientFactory(Protocol):
     def __call__(self, source: ModelSource, *, on_result: ResultCallback,
-                 on_status: StatusCallback, timeout_seconds: float, threads: int) -> ModelClient: ...
+                 on_status: StatusCallback, timeout_seconds: float, threads: int,
+                 requested_device: str = "auto") -> ModelClient: ...
 
 
 class UnavailableModelClient:
@@ -144,7 +166,8 @@ class UnavailableModelClient:
         if not self._closed:
             self._on_status(ModelStatusSnapshot.from_wire({"model_status": "unavailable", "error_code": "MODEL_UNAVAILABLE"}))
 
-    def submit(self, observation: GameObservation | CanonicalPublicGameView) -> str | None:
+    def submit(self, request: ModelRecommendationRequest, *,
+               timeout_seconds: float | None = None) -> str | None:
         if self._closed:
             raise ModelBackendError(ModelErrorCode.MODEL_CLOSED)
         self._on_status(ModelStatusSnapshot.from_wire({"model_status": "unavailable", "error_code": "MODEL_UNAVAILABLE"}))
@@ -159,8 +182,8 @@ class UnavailableModelClient:
 
 def unavailable_client_factory(source: ModelSource, *, on_result: ResultCallback,
                                on_status: StatusCallback, timeout_seconds: float,
-                               threads: int) -> ModelClient:
-    del source, timeout_seconds, threads
+                               threads: int, requested_device: str = "auto") -> ModelClient:
+    del source, timeout_seconds, threads, requested_device
     return UnavailableModelClient(on_result=on_result, on_status=on_status)
 
 
@@ -168,9 +191,75 @@ class ModelServicePort(Protocol):
     @property
     def status(self) -> ModelStatusSnapshot: ...
     def submit(self, observation: GameObservation | CanonicalPublicGameView) -> None: ...
+    def submit_confirmed(self, decision: Mapping[str, Any], *,
+                         timeout_seconds: float | None = None) -> None: ...
     def invalidate(self) -> None: ...
     def import_model(self, source: ModelSource) -> None: ...
     def close(self) -> None: ...
+
+
+# Injected composition helper: projects a validated ConfirmedDecisionInput plus the
+# selected model artifact identity into the bounded pure-data wire payload. The
+# concrete implementation lives at the infrastructure boundary.
+ConfirmedDecisionProjector = Callable[[Any, str, str], Mapping[str, Any]]
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogEntryDTO:
+    """Bounded, provider-neutral discovery record for one catalog bundle."""
+
+    model_id: str
+    directory: str
+    provider: str
+    backend: str
+    runtime_contract: str
+    classification: str
+    experimental: bool
+    production_ready: bool
+    strength_claim: bool
+    artifact_sha256: str
+    source: Path = field(compare=False, repr=False)
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogProblemDTO:
+    directory: str
+    code: str
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogScanDTO:
+    entries: tuple[CatalogEntryDTO, ...] = ()
+    problems: tuple[CatalogProblemDTO, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class ActiveSelectionDTO:
+    """Strict active_model.json document. `kind` selects catalog or legacy identity."""
+
+    kind: str
+    model_id: str = ""
+    bundle: str = ""
+    path: str = ""
+    selected_at: str = ""
+
+
+class ModelCatalogPort(Protocol):
+    """Discovery/selection surface implemented by infrastructure and injected at composition.
+
+    Active-selection persistence is a marker-committed transaction:
+    stage -> (caller persists non-authoritative state) -> commit, with restore
+    for exact rollback after any failed later step. A staged document without a
+    matching marker is never activated.
+    """
+
+    def scan(self) -> CatalogScanDTO: ...
+    def load_active(self) -> ActiveSelectionDTO | None: ...
+    def save_active(self, selection: ActiveSelectionDTO) -> None: ...
+    def stage_active(self, selection: ActiveSelectionDTO) -> object: ...
+    def commit_active(self) -> None: ...
+    def restore_active(self, snapshot: object) -> bool: ...
+    def resolve_bundle(self, model_id: str, directory: str) -> Path: ...
 
 
 # Compatibility names are intentionally aliases, not a mutable/callable dict contract.

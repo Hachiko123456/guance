@@ -1,0 +1,32 @@
+{
+  "schema_version": 2,
+  "model_id": "marvel-v2-iter000100",
+  "provider": "guandan_marvel_v2",
+  "backend": "guandan",
+  "runtime": "torch",
+  "runtime_contract": "marvel_v2.cpu.v1",
+  "artifact": "deployment.json",
+  "artifact_format": "guance_marvel_v2_deployment_v1",
+  "artifact_sha256": "1fb26d96237d1000e00a26e1bf0449dcf2d916a064793e8d61a11a5e5c49a30a",
+  "artifact_bytes": 16479,
+  "input_contract": "GuandanMARVELV2.Rollout.v1",
+  "output_contract": "GuandanMARVELV2.ActionRow.v2",
+  "model_version": "MARVEL-V2-v1.3-iter000100",
+  "training_version": "M09-IPPO-pilot-20261011",
+  "rules_version": "GD-RULES-0.1",
+  "action_version": "GD-ACTION-0.2-MARVEL",
+  "environment_version": "GD-ENV-0.2-MARVEL",
+  "encoding_version": "GD-ENCODING-0.2-MARVEL",
+  "algorithm": "ippo",
+  "architecture": "v1.3",
+  "classification": "evaluation_only",
+  "readiness": {
+    "experimental": true,
+    "production_ready": false,
+    "strength_claim": false
+  },
+  "capabilities": {
+    "recommend": true,
+    "next_token_policy": true
+  }
+}

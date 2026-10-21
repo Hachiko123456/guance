@@ -5,7 +5,7 @@ import base64
 import hashlib
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 import shutil
 import socket
@@ -23,13 +23,15 @@ from guance.config import (
     load_preferences,
     save_preferences,
 )
-from guance.contracts import CanonicalAdviceResult, EngineUpdate, ModelStatusSnapshot, SourceFrame
+from guance.contracts import (
+    CanonicalAdviceResult, EngineUpdate, ModelLifecycleState, ModelStatusSnapshot, SourceFrame,
+)
 from guance.domain.session import AggregateParser, SessionEngine
 from guance.diagnostics import DiagnosticLog
 from guance.application.model_service import ModelService
 from guance.application.runtime.service import RuntimeOptions
 from guance.ports.capture import CaptureMode, ProxySnapshot, RuntimePaths, UpstreamProxy
-from guance.ports.model import ModelClientFactory
+from guance.ports.model import ActiveSelectionDTO, ModelBackendError, ModelCatalogPort, ModelClientFactory
 
 # Test/embedding compatibility hook; production supplies factories from bootstrap.
 TrainingDataRecorder = None
@@ -45,6 +47,10 @@ class _NoLiveSubsetProvider:
     def bind_capture(self, _capture_id: str) -> None:
         return None
     def unbind_capture(self) -> None:
+        return None
+    def bind_runtime_session(self, _session_id: str) -> None:
+        return None
+    def unbind_runtime_session(self) -> None:
         return None
     def drain_decisions(self) -> tuple[object, ...]:
         return ()
@@ -387,7 +393,9 @@ class GuanceController:
                  proxy_snapshot_factory: Callable[[], ProxySnapshot] | None = None,
                  certificate_inspector: Callable[[Path], Any] | None = None,
                  live_subset_provider: Any | None = None,
-                 canonical_converter_factory: Callable[[Path, str], Any] | None = None):
+                 canonical_converter_factory: Callable[[Path, str], Any] | None = None,
+                 confirmed_decision_projector: Callable[..., Any] | None = None,
+                 catalog: ModelCatalogPort | None = None):
         self.viewmodel = viewmodel
         self.paths = paths or app_paths()
         ensure_app_paths(self.paths)
@@ -403,7 +411,12 @@ class GuanceController:
         self._proxy_snapshot_factory = proxy_snapshot_factory
         self._certificate_inspector = certificate_inspector
         self._canonical_converter_factory = canonical_converter_factory
+        self._decision_projector = confirmed_decision_projector
+        self._catalog = catalog
         self._live_subset = live_subset_provider or _NoLiveSubsetProvider()
+        identity_hook = getattr(self._live_subset, "set_model_artifact_identity_provider", None)
+        if callable(identity_hook):
+            identity_hook(self._model_artifact_identity)
         self.session = SessionEngine(
             "desktop", aggregate_parser=aggregate_parser, accepted_host=accepted_host,
             event_adapter=self._live_subset.adapt_event,
@@ -429,27 +442,175 @@ class GuanceController:
         self._active_advice_key: tuple[str, str, int] | None = None
         self._latest_model_observation = None
         self._pending_model_observation = None
+        self._pending_model_generation: int | None = None
+        self._pending_confirmed_key: tuple[str, str, int] | None = None
         self._primary_engine_error: dict[str, Any] | None = None
         self._engine_error_repeats = 0
         self._model_selection_lock = threading.RLock()
         self._selection_generation = 0
         self._model_ui_sequence = 0
         self._selection_failed = bool(self.preferences.get('model_selection_failed', False))
+        self._selection_failure_code = 'MODEL_NOT_LOADED'
+        self._no_selection = False
+        self._active_catalog_id = ""
         self._selection_in_progress = False
+        # Generation that most recently reached a verified ready. Used to keep a
+        # mid-session (post-ready) inference error in-session only: it must not
+        # persist a durable selection-failure latch that would block the next
+        # launch, whereas a genuine load failure (the generation never became
+        # ready) does.
+        self._ready_generation = -1
         self._controller_closed = False
         if self._selection_failed:
             self._requested_source = self.preferences.get('requested_model_path', '')
         else:
-            self._requested_source = default_model_source(self.paths, self.preferences)
+            resolved = self._resolve_startup_source()
+            if self._selection_failed:
+                # Tampered/broken active selection: fail-closed latch, explicit retry only.
+                self._requested_source = ""
+            elif resolved is None:
+                self._no_selection = True
+                self._requested_source = ""
+            else:
+                self._requested_source = resolved
         self._persisted_source = self.preferences.get('model_path', '')
         self._create_model_service()
         self._attach_signals()
+        self._refresh_catalog_ui()
         self.viewmodel.set_debug_capture_enabled(
             bool(self.preferences.get("debug_capture_enabled", False))
         )
         saved_layout = self.preferences.get("floating_layout", {})
         if isinstance(saved_layout, dict):
             self.viewmodel.restore_floating_layout(saved_layout)
+
+    def _resolve_startup_source(self) -> Path | None:
+        """Resolve the explicit startup selection; never an implicit default or fallback."""
+        override = os.environ.get("GUANCE_MODEL_BUNDLE") or os.environ.get("GUANCE_MODEL_PATH")
+        if isinstance(override, str) and override.strip():
+            return Path(override)
+        if self._catalog is None:
+            # Legacy embedding compatibility only; the production composition root
+            # always injects a catalog, so real startup is selection-driven.
+            return default_model_source(self.paths, self.preferences)
+        try:
+            document = self._catalog.load_active()
+        except ModelBackendError as exc:
+            # A tampered/corrupt selection document is explicit failure, not "no selection".
+            self._selection_failed = True
+            self._selection_failure_code = exc.code if exc.code in (
+                'ACTIVE_SELECTION_INVALID', 'MODEL_PREFERENCES_FAILED') else 'ACTIVE_SELECTION_INVALID'
+            self._persist_startup_selection_failure("")
+            return None
+        except Exception:
+            self._selection_failed = True
+            self._selection_failure_code = 'ACTIVE_SELECTION_INVALID'
+            self._persist_startup_selection_failure("")
+            return None
+        if document is None:
+            legacy = self.preferences.get('model_path', '')
+            if isinstance(legacy, str) and legacy.strip():
+                # The pre-catalog explicit choice is adopted only after the active
+                # document is committed; migration failure is explicit unavailable.
+                if not self._migrate_legacy_selection(legacy.strip()):
+                    return None
+                return Path(legacy.strip())
+            return None
+        if document.kind == "catalog":
+            try:
+                source = self._catalog.resolve_bundle(document.model_id, document.bundle)
+            except ModelBackendError:
+                self._selection_failed = True
+                self._selection_failure_code = 'ACTIVE_SELECTION_INVALID'
+                self._persist_startup_selection_failure(document.model_id)
+                return None
+            except Exception:
+                self._selection_failed = True
+                self._selection_failure_code = 'ACTIVE_SELECTION_INVALID'
+                self._persist_startup_selection_failure(document.model_id)
+                return None
+            self._active_catalog_id = document.model_id
+            return source
+        return Path(document.path)
+
+    def _migrate_legacy_selection(self, legacy: str) -> bool:
+        """Record the pre-catalog explicit choice as a committed active document.
+
+        The legacy source is adopted only when the active document commits;
+        otherwise startup stays explicit unavailable (never a silent load).
+        """
+        if self._catalog is None:
+            return False
+        selection = ActiveSelectionDTO(kind="legacy", path=legacy,
+                                       selected_at=self._selection_timestamp())
+        snapshot: object | None = None
+        try:
+            snapshot = self._catalog.stage_active(selection)
+            self._catalog.commit_active()
+        except Exception:
+            if snapshot is not None:
+                try:
+                    self._catalog.restore_active(snapshot)
+                except Exception:
+                    pass
+            self.log.write("model_selection_migration_failed", level="ERROR",
+                           message="legacy model_path could not be recorded as active selection")
+            return False
+        self.log.write("model_selection_migrated",
+                       message="legacy model_path recorded as active selection")
+        return True
+
+    @staticmethod
+    def _selection_timestamp() -> str:
+        return datetime.now(timezone.utc).isoformat(timespec='seconds')
+
+    def _persist_startup_selection_failure(self, requested: object) -> None:
+        """Persist the fail-closed latch for a broken/ambiguous startup selection.
+
+        The durable latch forces an explicit user re-selection even after the
+        external cause (tamper, duplicate, reparse) has been removed; best effort
+        only when storage itself is unavailable.
+        """
+        try:
+            preferences = {**self.preferences,
+                           'model_selection_failed': True,
+                           'requested_model_path': str(requested)}
+            save_preferences(self.paths, preferences)
+        except Exception:
+            return
+        self.preferences = preferences
+
+    def _refresh_catalog_ui(self) -> None:
+        if self._catalog is None:
+            return
+        try:
+            scan = self._catalog.scan()
+            entries = [{"model_id": entry.model_id, "directory": entry.directory,
+                        "provider": entry.provider, "backend": entry.backend,
+                        "runtime_contract": entry.runtime_contract,
+                        "classification": entry.classification,
+                        "experimental": entry.experimental,
+                        "production_ready": entry.production_ready,
+                        "strength_claim": entry.strength_claim,
+                        "artifact_sha256": entry.artifact_sha256}
+                       for entry in scan.entries]
+            problems = [{"directory": problem.directory, "code": problem.code}
+                        for problem in scan.problems]
+        except ModelBackendError as exc:
+            entries, problems = [], [{"directory": "", "code": exc.code}]
+        except Exception:
+            entries, problems = [], [{"directory": "", "code": "CATALOG_BUNDLE_INVALID"}]
+        source = self._persisted_source or self._requested_source
+        if self._active_catalog_id:
+            active_summary = "catalog：" + self._active_catalog_id
+        elif isinstance(source, (str, Path)) and str(source).strip():
+            active_summary = "legacy：" + Path(str(source)).name
+        else:
+            active_summary = ""
+        try:
+            self.viewmodel.set_catalog(entries, problems, self._active_catalog_id, active_summary)
+        except AttributeError:
+            return
 
     def _attach_signals(self) -> None:
         self.viewmodel.startRequested.connect(self.start)
@@ -464,6 +625,16 @@ class GuanceController:
         self.viewmodel.confirmSeatRequested.connect(self.confirm_seat)
         self.viewmodel.modelImportRequested.connect(self.import_model)
         self.viewmodel.debugCaptureRequested.connect(self.set_debug_capture_enabled)
+        if hasattr(self.viewmodel, "catalogModelRequested"):
+            self.viewmodel.catalogModelRequested.connect(self.select_catalog_model)
+        if hasattr(self.viewmodel, "catalogRefreshRequested"):
+            self.viewmodel.catalogRefreshRequested.connect(self.refresh_catalog)
+
+    def refresh_catalog(self) -> None:
+        with self._lock:
+            if self._controller_closed:
+                return
+        self._refresh_catalog_ui()
 
 
     def confirm_seat(self, relation: Any) -> None:
@@ -546,10 +717,13 @@ class GuanceController:
     def _open_debug_recorder(self) -> None:
         self._debug_capture_failed = False
         self._last_canonical_close = None
+        # Recommendation runtime/session identity is independent of optional
+        # debug-evidence recording: the confirmed-decision producer is bound on
+        # every capture run, whether or not raw frames are written.
+        self._bind_recommendation_session()
         if not bool(self.preferences.get("debug_capture_enabled", False)):
             self._debug_recorder = None
             self._canonical_converter = None
-            self._live_subset.unbind_capture()
             return
         recorder = DebugFrameRecorder(self._debug_capture_root())
         path = recorder.start()
@@ -567,6 +741,31 @@ class GuanceController:
             "code": "DEBUG_CAPTURE_STARTED",
             "message": f"调试报文保存已启动：{path}",
         })
+
+    def _bind_recommendation_session(self) -> None:
+        """Bind the real decision producer even when debug recording is disabled.
+
+        Recommendation decisions need a stable runtime/session identity that is
+        independent of the optional evidence recorder (no raw frame file or
+        converter is required).
+        """
+        try:
+            self._live_subset.bind_runtime_session("runtime-session")
+        except Exception:
+            pass  # provider stays unbindable -> no decisions (fail closed)
+
+    def _clear_recommendation_state_locked(self) -> None:
+        """Clear every recommendation identity together (caller holds the lock)."""
+        self._active_advice_key = None
+        self._pending_confirmed_key = None
+        self._pending_model_observation = None
+        self._pending_model_generation = None
+        self._latest_model_observation = None
+
+    def _clear_pending_model_requests(self) -> None:
+        """Clear every stale/pending recommendation identity (never partially)."""
+        with self._lock:
+            self._clear_recommendation_state_locked()
 
     def _close_debug_recorder(self) -> None:
         recorder, self._debug_recorder = self._debug_recorder, None
@@ -587,6 +786,7 @@ class GuanceController:
             except Exception:
                 self._last_canonical_close = None
         self._live_subset.unbind_capture()
+        self._live_subset.unbind_runtime_session()
         if path is not None and self._last_debug_capture_stats.get("frames", 0):
             self.viewmodel.append_log({
                 "level": "INFO",
@@ -889,9 +1089,7 @@ class GuanceController:
                 self._training_stopped = False
                 self.session.reset()
                 self._last_frame_received_at = None
-                self._active_advice_key = None
-                self._latest_model_observation = None
-                self._pending_model_observation = None
+                self._clear_recommendation_state_locked()
                 self._table_game_key = None
                 self._table_seat_confirmed = False
                 self.viewmodel.apply_table_state({})
@@ -914,7 +1112,8 @@ class GuanceController:
                 self._ensure_training_recorder()
                 if isinstance(self._model, ModelService) and self._model.status.get("model_status") == "closed":
                     self._create_model_service()
-                if not self._selection_failed and not self._selection_in_progress:
+                if not self._selection_failed and not self._selection_in_progress \
+                        and not getattr(self, '_no_selection', False):
                     self._model.start()
                 self._status({"phase":"waiting","running":True,"connected":True,"busy":False,"network_mode":result.get("mode","direct"),"detail":"采集已启动。请关闭当前大掼蛋小程序，重新打开大掼蛋并进入“经典玩法”实际对局；只停留在首页或大厅不会产生局面。"})
             else:
@@ -945,9 +1144,7 @@ class GuanceController:
             self._close_debug_recorder()
             self.session.reset()
             self._last_frame_received_at = None
-            self._active_advice_key = None
-            self._latest_model_observation = None
-            self._pending_model_observation = None
+            self._clear_recommendation_state_locked()
             self._table_game_key = None
             self._table_seat_confirmed = False
             self.viewmodel.apply_table_state({})
@@ -1002,6 +1199,96 @@ class GuanceController:
     def selection_generation(self) -> int:
         return self._selection_generation
 
+    def _model_artifact_identity(self) -> tuple[str, str] | None:
+        """Selected MARVEL model artifact identity for decision/cache binding."""
+        model = self._model
+        if not isinstance(model, ModelService) or model.status.get("model_status") != "ready":
+            return None
+        metadata = dict(model.status.metadata)
+        if metadata.get("provider") != "guandan_marvel_v2":
+            return None
+        artifact_id = str(metadata.get("model_version", ""))
+        artifact_sha = str(metadata.get("model_sha256", ""))
+        if (not artifact_id or len(artifact_id) > 128
+                or not all(c.isalnum() or c in "._:-" for c in artifact_id)
+                or len(artifact_sha) != 64
+                or any(c not in "0123456789abcdef" for c in artifact_sha)):
+            return None
+        return artifact_id, artifact_sha
+
+    def _marvel_confirmed_active(self) -> bool:
+        return (self._decision_projector is not None
+                and self._model_artifact_identity() is not None)
+
+    def _maybe_submit_confirmed(self, decision: Any) -> None:
+        """Submit the confirmed-decision request for the current MARVEL turn only."""
+        if not self._marvel_confirmed_active():
+            return
+        identity = decision.public_state.identity
+        key = (identity.session_id, identity.game_id, identity.state_version)
+        latest = (self._latest_model_observation.key
+                  if self._latest_model_observation is not None else None)
+        with self._lock:
+            pending = self._pending_confirmed_key
+            active = self._active_advice_key
+        if pending is None or key != pending or latest != key or active != key:
+            return
+        model_identity = self._model_artifact_identity()
+        if model_identity is None:
+            return
+        try:
+            payload = self._decision_projector(decision, model_identity[0], model_identity[1])
+            with self._lock:
+                if self._controller_closed or key != self._active_advice_key:
+                    return
+                self._pending_confirmed_key = None
+            self._model.submit_confirmed(payload, timeout_seconds=120.0)
+        except Exception:
+            self._clear_pending_model_requests()
+            self._model.invalidate()
+            self.viewmodel.clear_advice("严格模型输入不可用，推荐已暂停。")
+
+    def _drain_live_decisions(self) -> None:
+        """Drain provider decisions every frame; evidence recording is optional.
+
+        Recommendation submission never depends on debug-capture recording:
+        the canonical capture converter only records evidence when enabled.
+        """
+        for decision in self._live_subset.drain_decisions():
+            if self._canonical_converter is not None:
+                try:
+                    self._canonical_converter.observe_decision_opportunity(
+                        frame_sequence=decision.frame_sequence,
+                        state_version=decision.public_state.identity.state_version,
+                        public_action_index=len(decision.public_state.history.actions),
+                    )
+                    self._canonical_converter.record_decision(decision)
+                except Exception as exc:
+                    self._canonical_converter.block(getattr(exc, "code", "DECISION_WRITE_FAILED"))
+                    self._clear_pending_model_requests()
+                    self._model.invalidate()
+                    self.viewmodel.clear_advice("严格模型输入不可用，推荐已暂停。")
+                    continue
+            self._maybe_submit_confirmed(decision)
+        self._flush_confirmed_pending()
+
+    def _flush_confirmed_pending(self) -> None:
+        """Fail closed when an eligible MARVEL turn produced no confirmed decision."""
+        with self._lock:
+            if self._pending_confirmed_key is None:
+                return
+            self._clear_recommendation_state_locked()
+        self._model.invalidate()
+        self.viewmodel.clear_advice("严格模型输入不可用，推荐已暂停。")
+
+    def _requested_model_device(self) -> str:
+        """Explicit device preference; environment override is operator-scoped."""
+        env_value = os.environ.get("GUANCE_MODEL_DEVICE", "")
+        for value in (env_value, self.preferences.get("model_device", "auto")):
+            if isinstance(value, str) and value in ("auto", "cpu", "cuda"):
+                return value
+        return "auto"
+
     def _new_model_service(self, generation: int) -> ModelService:
         timeout = self.preferences.get('advice_timeout_ms', 2000)
         threads = self.preferences.get('inference_threads', 2)
@@ -1010,7 +1297,8 @@ class GuanceController:
         return ModelService(on_result=lambda value: self._on_advice(value, generation=generation),
             on_status=lambda value: self._on_model_status(value, generation=generation),
             client_factory=self._model_client_factory,
-            timeout_seconds=timeout / 1000, threads=threads)
+            timeout_seconds=timeout / 1000, threads=threads,
+            requested_device=self._requested_model_device())
 
     def _create_model_service(self) -> ModelService:
         # Restart is session-owned: never re-read an old preference/default after
@@ -1022,10 +1310,14 @@ class GuanceController:
             service = self._new_model_service(generation)
             self._model = service
             blocked = self._selection_failed or self._selection_in_progress or self._controller_closed
+            no_selection = self._no_selection
+            failure_code = self._selection_failure_code
             requested = self._requested_source
         self.viewmodel.set_model_selection_generation(generation)
         if blocked:
-            service.fail_selection('MODEL_NOT_LOADED')
+            service.fail_selection(failure_code)
+        elif no_selection:
+            service.fail_selection('MODEL_NOT_SELECTED', state=ModelLifecycleState.UNAVAILABLE)
         else:
             service._select(requested, start=False)
         return service
@@ -1085,6 +1377,33 @@ class GuanceController:
         # Empty dialog cancellation is not a confirmed selection.
         if path == '':
             return
+        self._begin_selection(path, catalog_model_id=None)
+
+    def select_catalog_model(self, model_id: str) -> None:
+        """Explicit selection of one discovered catalog model; discovery itself never selects."""
+        if not isinstance(model_id, str) or not model_id.strip():
+            return
+        if self._catalog is None:
+            return
+        self._begin_selection("", catalog_model_id=model_id.strip())
+
+    def _resolve_catalog_selection(self, model_id: str) -> tuple[Path, ActiveSelectionDTO] | None:
+        if self._catalog is None:
+            return None
+        try:
+            scan = self._catalog.scan()
+        except Exception:
+            return None
+        for entry in scan.entries:
+            if entry.model_id == model_id:
+                document = ActiveSelectionDTO(kind="catalog", model_id=entry.model_id,
+                                              bundle=entry.directory,
+                                              selected_at=self._selection_timestamp())
+                return entry.source, document
+        return None
+
+    def _begin_selection(self, path: str, *, catalog_model_id: str | None) -> None:
+        requested_label: object = catalog_model_id if catalog_model_id is not None else path
         with self._lock:
             if self._controller_closed:
                 return
@@ -1093,12 +1412,17 @@ class GuanceController:
             self._model_ui_sequence = 0
             self._selection_failed = True
             self._selection_in_progress = True
-            self._requested_source = path
+            self._no_selection = False
+            self._requested_source = requested_label
             self._active_advice_key = None
+            self._pending_confirmed_key = None
             latest = self._latest_model_observation
             self._pending_model_observation = latest if (
                 latest is not None and not self.session.paused
                 and latest.current_seat == latest.my_seat) else None
+            self._pending_model_generation = (generation
+                                              if self._pending_model_observation is not None
+                                              else None)
             old = self._model
             service = self._new_model_service(generation)
             self._model = service
@@ -1111,38 +1435,61 @@ class GuanceController:
         old.close()
         if isinstance(old, ModelService) and old.cleanup_errors:
             service.fail_selection('MODEL_CLEANUP_FAILED')
-            self._persist_selection_failure(generation, path)
+            self._persist_selection_failure(generation, requested_label)
             with self._lock:
                 if generation == self._selection_generation:
                     self._selection_in_progress = False
-                    self._pending_model_observation = None
+            self._clear_pending_model_requests()
             return
         if not self._model_selection_lock.acquire(timeout=2.0):
             service.fail_selection('MODEL_SELECTION_BUSY')
-            self._persist_selection_failure(generation, path)
+            self._persist_selection_failure(generation, requested_label)
             with self._lock:
                 if generation == self._selection_generation:
                     self._selection_in_progress = False
-                    self._pending_model_observation = None
+            self._clear_pending_model_requests()
             return
         activated = False
         try:
             with self._lock:
                 if generation != self._selection_generation or self._controller_closed:
                     return
-            try:
-                if not isinstance(path, (str, Path)) or not str(path).strip():
-                    raise ValueError('invalid model source')
-                selected = Path(path).resolve()
-            except Exception:
-                service.fail_selection('MODEL_SOURCE_INVALID')
-                self._persist_selection_failure(generation, path)
-                return
+            if catalog_model_id is not None:
+                resolved = self._resolve_catalog_selection(catalog_model_id)
+                if resolved is None:
+                    service.fail_selection('CATALOG_MODEL_UNAVAILABLE')
+                    self._persist_selection_failure_locked(generation, requested_label)
+                    return
+                selected, document = resolved
+            else:
+                try:
+                    if not isinstance(path, (str, Path)) or not str(path).strip():
+                        raise ValueError('invalid model source')
+                    selected = Path(path).resolve()
+                except Exception:
+                    service.fail_selection('MODEL_SOURCE_INVALID')
+                    self._persist_selection_failure(generation, path)
+                    return
+                document = ActiveSelectionDTO(kind="legacy", path=str(selected),
+                                              selected_at=self._selection_timestamp())
+            # The active document is staged first but only committed after the
+            # preferences mirror succeeds; a failed later step restores the exact
+            # prior bytes, and the commit marker keeps an unrestored state
+            # fail-closed across restarts.
+            active_snapshot: object | None = None
+            if self._catalog is not None:
+                try:
+                    active_snapshot = self._catalog.stage_active(document)
+                except Exception:
+                    service.fail_selection('MODEL_PREFERENCES_FAILED')
+                    return
             preferences = {**self.preferences, 'model_path': str(selected),
                 'model_selection_failed': False, 'requested_model_path': str(selected)}
             try:
                 save_preferences(self.paths, preferences)
             except Exception:
+                if active_snapshot is not None:
+                    self._catalog.restore_active(active_snapshot)
                 service.fail_selection('MODEL_PREFERENCES_FAILED')
                 return
             with self._lock:
@@ -1155,9 +1502,24 @@ class GuanceController:
                 self.preferences = preferences
                 self._requested_source = selected
                 self._selection_failed = False
+                self._active_catalog_id = catalog_model_id if catalog_model_id is not None else ""
+            if active_snapshot is not None:
+                try:
+                    self._catalog.commit_active()
+                except Exception:
+                    self._catalog.restore_active(active_snapshot)
+                    service.fail_selection('MODEL_PREFERENCES_FAILED')
+                    self._persist_selection_failure_locked(generation, requested_label)
+                    return
             service.import_model(selected)
-            activated = service.status.get('model_status') == 'ready'
-            if not activated:
+            # A real client loads asynchronously: `start()` returns while the
+            # worker reports `loading`. Only a *terminal* non-ready outcome is a
+            # selection failure. An in-progress load must never persist the
+            # durable failure latch, otherwise a successful real provider load
+            # would block the next launch (the ready/error callback decides).
+            selected_state = service.status.get('model_status')
+            activated = selected_state == 'ready'
+            if not activated and selected_state in ('error', 'unavailable', 'timeout'):
                 self._persist_selection_failure_locked(generation, selected)
         finally:
             with self._lock:
@@ -1165,28 +1527,42 @@ class GuanceController:
                     self._selection_in_progress = False
             self._model_selection_lock.release()
         pending = None
+        pending_generation = None
         if activated:
             with self._lock:
                 if generation == self._selection_generation and not self._controller_closed:
                     pending, self._pending_model_observation = self._pending_model_observation, None
+                    pending_generation, self._pending_model_generation = \
+                        self._pending_model_generation, None
         else:
             with self._lock:
                 if generation == self._selection_generation:
                     self._pending_model_observation = None
-        if pending is not None:
+                    self._pending_model_generation = None
+            if generation == self._selection_generation:
+                self._clear_pending_model_requests()
+        if pending is not None and pending_generation == generation:
             with self._lock:
                 submit = (generation == self._selection_generation
                           and self._model is service and not self._controller_closed
                           and not self._selection_failed)
+                confirmed_path = False
                 if submit:
                     self._active_advice_key = pending.key
+                    # MARVEL never replays a public turn: wait for the new
+                    # generation's matching confirmed decision (same key) instead.
+                    if self._marvel_confirmed_active():
+                        self._pending_confirmed_key = pending.key
+                        confirmed_path = True
             if submit:
                 self._model_ui({'phase': 'thinking', 'connected': True, 'running': True}, generation)
-                try:
-                    service.submit(pending)
-                except Exception:
-                    # A concurrent close/new selection already revoked delivery.
-                    pass
+                if not confirmed_path:
+                    try:
+                        service.submit(pending)
+                    except Exception:
+                        # A concurrent close/new selection already revoked delivery.
+                        pass
+        self._refresh_catalog_ui()
 
     def _diagnostic_snapshot(self) -> dict[str, Any]:
         """Build a bounded, metadata-only diagnostic snapshot.
@@ -1314,7 +1690,7 @@ class GuanceController:
                     self._debug_capture_failed = True
                     self._training_invalidate("capture_error")
                     self._close_debug_recorder()
-                    self._active_advice_key = None
+                    self._clear_recommendation_state_locked()
                     self._model.invalidate()
                     self.viewmodel.clear_advice("调试报文保存失败，推荐已暂停。")
                     self._status({"phase":"error","error_message":str(exc),"detail":"调试报文未能保存，已暂停继续解析。"})
@@ -1326,27 +1702,13 @@ class GuanceController:
                 if self._canonical_converter is not None:
                     self._canonical_converter.observe_engine_update(update)
                 self._handle_update(update)
-            if self._canonical_converter is not None:
-                for decision in self._live_subset.drain_decisions():
-                    try:
-                        self._canonical_converter.observe_decision_opportunity(
-                            frame_sequence=decision.frame_sequence,
-                            state_version=decision.public_state.identity.state_version,
-                            public_action_index=len(decision.public_state.history.actions),
-                        )
-                        self._canonical_converter.record_decision(decision)
-                    except Exception as exc:
-                        self._canonical_converter.block(getattr(exc, "code", "DECISION_WRITE_FAILED"))
-                        self._active_advice_key = None
-                        self._model.invalidate()
-                        self.viewmodel.clear_advice("严格模型输入不可用，推荐已暂停。")
+            self._drain_live_decisions()
 
     def _handle_update(self, update: EngineUpdate) -> None:
         self._training_update(update)
         if update.kind == "error":
-            self._active_advice_key = None
-            self._latest_model_observation = None
-            self._pending_model_observation = None
+            with self._lock:
+                self._clear_recommendation_state_locked()
             self._model.invalidate()
             self.viewmodel.clear_advice("局面无法安全同步，推荐已暂停。")
             if update.error_code == "engine_paused" and self._primary_engine_error is not None:
@@ -1406,19 +1768,19 @@ class GuanceController:
                 self._current_game_id = game_id
                 self._primary_engine_error = None
                 self._engine_error_repeats = 0
-                self._active_advice_key = None
+                with self._lock:
+                    self._clear_recommendation_state_locked()
                 self._model.invalidate()
                 self.viewmodel.clear_advice("局面已切换，等待新局推荐。")
             if not is_information:
-                self._active_advice_key = None
-                self._latest_model_observation = None
-                self._pending_model_observation = None
+                with self._lock:
+                    self._clear_recommendation_state_locked()
                 self._model.invalidate()
             if state_phase == "waiting_start" and game_id and self._debug_recorder is not None:
                 self._debug_recorder.begin_game(game_id, source_sequence)
             if state_phase in {"ended", "settled"}:
                 self._model.invalidate()
-                self._active_advice_key = None
+                self._clear_pending_model_requests()
                 if self._debug_recorder is not None and game_id:
                     self._debug_recorder.finish_game(game_id, source_sequence, state_phase)
                 self.viewmodel.clear_advice("本局已结束，等待下一局。")
@@ -1461,10 +1823,20 @@ class GuanceController:
                         and observation.current_seat == observation.my_seat)
             if eligible and getattr(self, '_selection_in_progress', False):
                 self._pending_model_observation = observation
-            elif (eligible and not getattr(self, '_selection_failed', False)):
+                with self._lock:
+                    self._pending_model_generation = self._selection_generation
+            elif (eligible and not getattr(self, '_selection_failed', False)
+                  and not getattr(self, '_no_selection', False)):
                 self._active_advice_key = observation.key
                 self._status({'phase': 'thinking', 'connected': True, 'running': True})
-                self._model.submit(observation)
+                if self._marvel_confirmed_active():
+                    # Single-path MARVEL turn: the matching confirmed decision is
+                    # submitted from this frame's decision drain; never a second
+                    # public-view request for the same turn.
+                    with self._lock:
+                        self._pending_confirmed_key = observation.key
+                else:
+                    self._model.submit(observation)
 
     def _on_advice(self, result: CanonicalAdviceResult | dict, *, generation: int | None = None) -> None:
         if generation is not None and (generation != self._selection_generation or self._selection_failed):
@@ -1519,19 +1891,39 @@ class GuanceController:
 
     def _on_model_status(self, status: ModelStatusSnapshot | dict, *, generation: int | None = None) -> None:
         state = status.get("model_status")
+        error_code = status.get("error_code", "")
+        no_selection_event = state == "unavailable" and error_code == "MODEL_NOT_SELECTED"
         with self._lock:
             if generation is not None and generation != self._selection_generation:
                 return
+            ready_generation = self._ready_generation
             if generation is not None and state in {'error', 'unavailable', 'timeout'}:
-                self._selection_failed = True
-                self._active_advice_key = None
-                requested = self._requested_source
+                if no_selection_event:
+                    requested = None
+                else:
+                    self._selection_failed = True
+                    self._active_advice_key = None
+                    # Only a load-phase failure (this generation never reached
+                    # ready) persists the durable selection latch. A post-ready
+                    # inference error stays in-session fail-closed and must not
+                    # block the next launch.
+                    requested = (self._requested_source
+                                 if generation != ready_generation else None)
             else:
                 requested = None
             if generation is not None and state == 'ready' and self._selection_failed:
                 return
+            if generation is not None and state == 'ready':
+                self._ready_generation = generation
         metadata = status.get("metadata", {})
         publish = self._status if generation is None else lambda data: self._model_ui(data, generation)
+        if no_selection_event:
+            # Discovery never activates; an unselected model is explicitly
+            # unavailable and must not become a persistent failure latch.
+            publish({"model_state": "unavailable", "model_metadata": {},
+                     "model_summary": "尚未选择模型；请在设置中从模型目录选择模型包。",
+                     "error_code": "MODEL_NOT_SELECTED", "error_message": ""})
+            return
         if state == "ready":
             ready = {"model_state": "ready", "model_summary": self._model_summary(metadata, "ready"),
                      "model_metadata": metadata, "error_message": ""}
@@ -1543,13 +1935,20 @@ class GuanceController:
                 ready.update({"phase": "waiting", "detail": "模型已就绪，等待当前局面。"})
             publish(ready)
         elif state in {"error", "unavailable", "timeout"}:
-            self._active_advice_key = None
+            self._clear_pending_model_requests()
             if generation is None and hasattr(self, '_model'):
                 self._model.invalidate()
             if generation is None:
                 self.viewmodel.clear_advice('模型不可用，推荐已暂停。')
             else:
                 self._clear_model_advice('模型不可用，推荐已暂停。', generation)
+                # An asynchronous load failure must persist the durable
+                # fail-closed latch here: the selection transaction already
+                # returned while the worker was still loading, so only this
+                # terminal status callback can record that the explicit
+                # selection failed.
+                if requested is not None:
+                    self._persist_selection_failure(generation, requested)
             update = {"model_state": state, "model_metadata": metadata,
                       "model_summary": self._model_summary(metadata, state or "unavailable"),
                       "error_code": status.get("error_code", ""),
@@ -1564,8 +1963,8 @@ class GuanceController:
     def _on_runtime_status(self, status: dict) -> None:
         if status.get("state") in {"error","stop_error"}:
             self._training_invalidate("capture_error")
-            self._active_advice_key = None
             self._model.invalidate()
+            self._clear_pending_model_requests()
             self.viewmodel.clear_advice("采集异常，推荐已暂停。")
             self._status({"phase":"error","error_message":status.get("message","采集异常")})
         self.viewmodel.append_log({"level":"INFO","code":str(status.get("state","RUNTIME")),"message":str(status.get("message",status.get("state","")))})

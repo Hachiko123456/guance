@@ -23,6 +23,10 @@ from ..manifest import ModelBundle, ModelManifest
 
 PASS = "PASS"
 COMMIT = "COMMIT"
+GUANDAN_RUNTIME_CONTRACT = "guandan.runtime.v1"
+# Discovery claim contract: the scaffolded Guandan family is test/evaluation-only
+# and may not self-report production or strength claims.
+GUANDAN_ALLOWED_CLASSIFICATIONS = frozenset({"experimental", "evaluation_only"})
 GUANDAN_VERSIONS = {
     "rules_version": "GD-RULES-0.1", "action_version": "GD-ACTION-0.1",
     "environment_version": "GD-ENV-0.1", "encoding_version": "GD-ENCODING-0.1",
@@ -186,6 +190,9 @@ class GuandanAdvisor:
         validate_advice_for_view(view, result)
         return result
 
+    def recommend_confirmed(self, decision, request_id: str) -> CanonicalAdviceResult:
+        raise ModelBackendError("REQUEST_KIND_UNSUPPORTED")
+
     def close(self) -> None:
         self._closed = True
         self._loaded = False
@@ -213,6 +220,16 @@ class GuandanProvider(AbstractProviderFactory):
             raise ModelBackendError("MODEL_VERSION_UNSUPPORTED")
         if manifest.runtime not in ("unavailable", "torch", "onnx", "test"):
             raise ModelBackendError("RUNTIME_UNSUPPORTED")
+        if (manifest.runtime_contract is not None
+                and manifest.runtime_contract != GUANDAN_RUNTIME_CONTRACT):
+            raise ModelBackendError("RUNTIME_UNSUPPORTED")
+        if manifest.classification is not None or manifest.readiness is not None:
+            if (manifest.classification not in GUANDAN_ALLOWED_CLASSIFICATIONS
+                    or manifest.readiness is None
+                    or manifest.readiness.get("experimental") is not True
+                    or manifest.readiness.get("production_ready") is not False
+                    or manifest.readiness.get("strength_claim") is not False):
+                raise ModelBackendError("CLAIM_UNSUPPORTED")
         if manifest.runtime == "test" and not self.test_only:
             raise ModelBackendError("MODEL_UNAVAILABLE")
         if manifest.artifact_format not in ("torch_checkpoint", "pt", "onnx", "test"):
@@ -223,10 +240,12 @@ class GuandanProvider(AbstractProviderFactory):
     def create_observation_adapter(self) -> GuandanPublicObservationAdapter:
         return self.adapter if self.adapter is not None else GuandanPublicObservationAdapter()
 
-    def create_runtime(self, bundle: ModelBundle) -> GuandanRuntime | None:
+    def create_runtime(self, bundle: ModelBundle, *,
+                       requested_device: str = "auto") -> GuandanRuntime | None:
         return self.runtime_factory(bundle) if self.test_only and self.runtime_factory is not None else None
 
-    def create(self, bundle: ModelBundle) -> GuandanAdvisor:
+    def create(self, bundle: ModelBundle, *,
+               requested_device: str = "auto") -> GuandanAdvisor:
         self.validate(bundle.manifest)
         return GuandanAdvisor(bundle, self.create_runtime(bundle), self.create_observation_adapter(),
                               self.decoder or GuandanTokenActionDecoder({}),

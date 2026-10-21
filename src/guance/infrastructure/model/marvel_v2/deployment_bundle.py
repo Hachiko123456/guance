@@ -1,8 +1,12 @@
-"""Strict Phase 6 deployment descriptor for the pinned MARVEL V2 runtime.
+"""Strict data-driven deployment descriptor for MARVEL V2 runtime materials.
 
-The selected Guance bundle contains only this bounded JSON descriptor.  The
-checkpoint and Guandan source remain in the user's explicit local paths named by
-environment variables; neither is copied, scanned for, or inferred.
+The selected Guance bundle contains only this bounded JSON descriptor. The
+descriptor declares (a) the runtime source fingerprint of the materialized
+runtime installation, (b) the native extension bytes/hash/embedded source
+identity, (c) the per-bundle checkpoint expectations and payload variant, and
+(d) evaluation/readiness. No global checkpoint/iteration/source constants are
+used for loading; the descriptor and the runtime installation are validated
+against each other and against the actual environment.
 """
 from __future__ import annotations
 
@@ -23,49 +27,32 @@ from typing import Any, Mapping
 
 from ..errors import ModelBackendError
 from ..manifest import MAX_MANIFEST_BYTES, ModelBundle, ModelManifest, strict_json
-from .checkpoint import canonical_json_hash
+from .checkpoint import CheckpointExpectation, canonical_json_hash
 from .deployment import DeploymentIdentity, require_platform_distinct_from_training
 from .identity import (
-    CHECKPOINT_BYTES, CHECKPOINT_SCHEMA, CHECKPOINT_SHA256, CONFIG_SHA256,
-    PROTOCOL, SOURCE_COMMIT, SOURCE_SHA256, TRAINING_BACKEND_SHA256,
-    DEPLOYMENT_ARTIFACT_FORMAT, SEMANTIC_FIELDS, fixed_manifest, validate_provider_manifest,
+    CHECKPOINT_SCHEMA, DEPLOYMENT_ARTIFACT_FORMAT, DEPLOYMENT_SCHEMA, PROTOCOL,
+    checkpoint_manifest, validate_provider_manifest,
 )
 
-SCHEMA = "guance-guandan-marvel-v2-deployment-v1"
+SCHEMA = DEPLOYMENT_SCHEMA
 SOURCE_ENV = "GUANCE_MARVEL_V2_SOURCE"
 CHECKPOINT_ENV = "GUANCE_MARVEL_V2_CHECKPOINT"
-EXPECTED_DEPLOYMENT_SHA256 = "363723662970edc84dcdc63c143dbe3d8bb54816e0b5c4822cd32d184740f6ca"
-EXPECTED_RUNTIME = MappingProxyType({
-    "os_name": "Windows", "python_implementation": "CPython",
-    "python_version": "3.12.0", "python_cache_tag": "cpython-312",
-    "pointer_bits": 64, "torch_version": "2.13.0+cpu", "torch_cuda": "cpu",
-    "native_filename": "_guandan_cpp.cp312-win_amd64.pyd",
-    "native_sha256": "55803483a3271ddfc53a04930ad7b40c13a8ce7da6d02981a426f4b08602a9dd",
-    "native_bytes": 3_684_821,
-    "native_source_sha256": "40058234af8227e9f0a0aa8c555959717e277f4ac16ed5094a918a32d46f6898",
-    "compiler": "11.2.0", "cxx_standard": 202002, "backend": "cpp",
-    "protocol_version": PROTOCOL, "identity_sha256": EXPECTED_DEPLOYMENT_SHA256,
-})
 _CHECKPOINT_KEYS = frozenset({
     "filename", "bytes", "sha256", "schema", "algorithm", "architecture",
     "iteration", "protocol_version", "classification", "resume_classification",
     "training_resume_allowed", "resolved_config_hash", "source_hash",
-    "source_parent_commit", "training_backend_identity_hash",
+    "source_parent_commit", "training_backend_identity_hash", "payload_variant",
 })
-_RUNTIME_KEYS = frozenset(EXPECTED_RUNTIME)
-_EVALUATION = MappingProxyType({
-    "formal_status": "not_run", "champion_status": "not_established",
-    "strength_claim": False,
+_RUNTIME_KEYS = frozenset({
+    "os_name", "python_implementation", "python_version", "python_cache_tag",
+    "pointer_bits", "torch_version", "torch_cuda", "native_filename", "native_sha256",
+    "native_bytes", "native_source_sha256", "compiler", "cxx_standard", "backend",
+    "protocol_version", "identity_sha256",
 })
-_READINESS = MappingProxyType({
-    "experimental": True, "test_only": False, "production_ready": False,
-    "public_self_supported": False, "live_eligible_set": [],
-})
-_DEPLOYMENT_ONLY_SOURCE_EXCEPTIONS = MappingProxyType({
-    "guandan_marvel/kaggle/worker.py": (
-        36_656, "db0c6ff277d2d21603cf8dbc0792aa25362786c95933443c46ed452ae2fb2769",
-    ),
-})
+_EVALUATION = {"formal_status": "not_run", "champion_status": "not_established",
+               "strength_claim": False}
+_READINESS = {"experimental": True, "test_only": False, "production_ready": False,
+              "public_self_supported": False, "live_eligible_set": []}
 _TOP_KEYS = frozenset({
     "schema", "checkpoint", "source_fingerprint", "runtime", "evaluation",
     "readiness", "source_environment", "checkpoint_environment",
@@ -77,6 +64,7 @@ _FORBIDDEN_SOURCE_ENTRIES = frozenset({
 })
 _FORBIDDEN_SOURCE_PACKAGES = frozenset({"guance", "torch", "numpy"})
 _REPARSE_ATTRIBUTE = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+_HEX64 = set("0123456789abcdef")
 
 
 def _fail(code: str = "MODEL_VERSION_UNSUPPORTED") -> None:
@@ -92,6 +80,17 @@ def _sha256_file(path: Path) -> tuple[str, int]:
         return h.hexdigest(), size
     except OSError:
         raise ModelBackendError("ARTIFACT_MISSING") from None
+
+
+def _is_hex64(value: Any) -> bool:
+    return isinstance(value, str) and len(value) == 64 and set(value) <= _HEX64
+
+
+def _bounded_text(value: Any, *, maximum: int) -> str:
+    if (not isinstance(value, str) or not value or len(value) > maximum
+            or any(ord(char) < 32 or ord(char) == 127 for char in value)):
+        _fail("MANIFEST_INVALID")
+    return value
 
 
 def _safe_relative(value: Any) -> str:
@@ -165,8 +164,9 @@ def _reject_forbidden_source_entries(root: Path) -> None:
 def _validate_source_fingerprint(value: Any) -> Mapping[str, Any]:
     if (type(value) is not dict or value.keys() != {"schema", "components", "hash"}
             or value.get("schema") != "guandan-marvel-source-fingerprint-v1"
-            or value.get("hash") != SOURCE_SHA256
-            or canonical_json_hash({"schema": value["schema"], "components": value["components"]}) != SOURCE_SHA256):
+            or not _is_hex64(value.get("hash"))
+            or canonical_json_hash({"schema": value["schema"], "components": value["components"]})
+            != value["hash"]):
         _fail()
     components = value["components"]
     if type(components) is not dict or not components:
@@ -176,21 +176,87 @@ def _validate_source_fingerprint(value: Any) -> Mapping[str, Any]:
         if type(component) is not dict or component.keys() != {"files", "hash"}:
             _fail()
         files = component["files"]
-        if type(files) is not list or canonical_json_hash(files) != component["hash"]:
+        if type(files) is not list or not files or canonical_json_hash(files) != component["hash"]:
             _fail()
         for entry in files:
             if (type(entry) is not dict or entry.keys() != {"path", "sha256", "bytes"}
                     or _safe_relative(entry.get("path")) in seen
-                    or not isinstance(entry.get("sha256"), str) or len(entry["sha256"]) != 64
+                    or not _is_hex64(entry.get("sha256"))
                     or type(entry.get("bytes")) is not int or entry["bytes"] < 0):
                 _fail()
             seen.add(entry["path"])
     return MappingProxyType(value)
 
 
+def _validate_checkpoint_block(checkpoint: Any, manifest: ModelManifest) -> CheckpointExpectation:
+    if type(checkpoint) is not dict or checkpoint.keys() != _CHECKPOINT_KEYS:
+        _fail("MANIFEST_INVALID")
+    expectation = CheckpointExpectation(
+        filename=checkpoint["filename"], bytes=checkpoint["bytes"], sha256=checkpoint["sha256"],
+        schema=checkpoint["schema"], algorithm=checkpoint["algorithm"],
+        architecture=checkpoint["architecture"], protocol_version=checkpoint["protocol_version"],
+        iteration=checkpoint["iteration"], classification=checkpoint["classification"],
+        resume_classification=checkpoint["resume_classification"],
+        training_resume_allowed=checkpoint["training_resume_allowed"],
+        resolved_config_hash=checkpoint["resolved_config_hash"],
+        source_hash=checkpoint["source_hash"],
+        source_parent_commit=checkpoint["source_parent_commit"],
+        training_backend_identity_hash=checkpoint["training_backend_identity_hash"],
+        payload_variant=checkpoint["payload_variant"],
+        model_version=manifest.model_version, training_version=manifest.training_version)
+    try:
+        return expectation.validate()
+    except ModelBackendError:
+        _fail()
+
+
+def _validate_runtime_block(runtime: Any) -> Mapping[str, Any]:
+    if type(runtime) is not dict or runtime.keys() != _RUNTIME_KEYS:
+        _fail("MANIFEST_INVALID")
+    for name, maximum in (("os_name", 64), ("python_implementation", 64),
+                          ("python_version", 32), ("python_cache_tag", 32),
+                          ("torch_version", 64), ("torch_cuda", 32),
+                          ("native_filename", 260), ("compiler", 64)):
+        _bounded_text(runtime.get(name), maximum=maximum)
+    if (not runtime["native_filename"].endswith((".pyd", ".so"))
+            or any(char in runtime["native_filename"] for char in '<>:"/\\|?*')):
+        _fail("MANIFEST_INVALID")
+    for name in ("native_sha256", "native_source_sha256", "identity_sha256"):
+        if not _is_hex64(runtime.get(name)):
+            _fail("MANIFEST_INVALID")
+    if (type(runtime["native_bytes"]) is not int or not 0 < runtime["native_bytes"] < 2**31
+            or type(runtime["pointer_bits"]) is not int or runtime["pointer_bits"] not in (32, 64)
+            or type(runtime["cxx_standard"]) is not int or runtime["cxx_standard"] < 201103):
+        _fail("MANIFEST_INVALID")
+    if runtime["backend"] != "cpp" or runtime["protocol_version"] != PROTOCOL:
+        _fail()
+    return MappingProxyType(dict(runtime))
+
+
+def _validate_evaluation(value: Any) -> Mapping[str, Any]:
+    if type(value) is not dict or set(value) != set(_EVALUATION):
+        _fail("MANIFEST_INVALID")
+    for name, expected in _EVALUATION.items():
+        if type(value[name]) is not type(expected) or value[name] != expected:
+            _fail()
+    return MappingProxyType(dict(value))
+
+
+def _validate_readiness(value: Any) -> Mapping[str, Any]:
+    if type(value) is not dict or set(value) != set(_READINESS):
+        _fail("MANIFEST_INVALID")
+    for name in ("experimental", "test_only", "production_ready", "public_self_supported"):
+        if type(value[name]) is not type(_READINESS[name]) or value[name] != _READINESS[name]:
+            _fail()
+    if value["live_eligible_set"] != []:
+        _fail("MANIFEST_INVALID")
+    return MappingProxyType({**value, "live_eligible_set": tuple()})
+
+
 @dataclass(frozen=True, slots=True)
 class DeploymentDescriptor:
     checkpoint: Mapping[str, Any]
+    checkpoint_expectation: CheckpointExpectation
     source_fingerprint: Mapping[str, Any]
     runtime: Mapping[str, Any]
     evaluation: Mapping[str, Any]
@@ -204,33 +270,42 @@ class ResolvedDeployment:
     checkpoint_bundle: ModelBundle
     source_root: Path
     deployment_identity: DeploymentIdentity
-    bootstrap: VerifiedPackageBootstrap
+    bootstrap: "VerifiedPackageBootstrap"
 
 
-def deployment_payload(source_fingerprint: Mapping[str, Any]) -> dict[str, Any]:
-    """Create the exact bounded local descriptor; callers decide where to save it."""
+def build_deployment(*, checkpoint: CheckpointExpectation, source_fingerprint: Mapping[str, Any],
+                     runtime: Mapping[str, Any]) -> dict[str, Any]:
+    """Create the exact bounded descriptor for one bundle; callers decide where to save it."""
+    expectation = checkpoint.validate()
     verified = _validate_source_fingerprint(dict(source_fingerprint))
+    block = {
+        "filename": expectation.filename, "bytes": expectation.bytes, "sha256": expectation.sha256,
+        "schema": expectation.schema, "algorithm": expectation.algorithm,
+        "architecture": expectation.architecture, "iteration": expectation.iteration,
+        "protocol_version": expectation.protocol_version,
+        "classification": expectation.classification,
+        "resume_classification": expectation.resume_classification,
+        "training_resume_allowed": expectation.training_resume_allowed,
+        "resolved_config_hash": expectation.resolved_config_hash,
+        "source_hash": expectation.source_hash,
+        "source_parent_commit": expectation.source_parent_commit,
+        "training_backend_identity_hash": expectation.training_backend_identity_hash,
+        "payload_variant": expectation.payload_variant,
+    }
     return {
-        "schema": SCHEMA,
-        "checkpoint": {
-            "filename": "iter000100.pt", "bytes": CHECKPOINT_BYTES, "sha256": CHECKPOINT_SHA256,
-            "schema": CHECKPOINT_SCHEMA, "algorithm": "ippo", "architecture": "v1.3",
-            "iteration": 100, "protocol_version": PROTOCOL, "classification": "evaluation_only",
-            "resume_classification": "evaluation_only", "training_resume_allowed": False,
-            "resolved_config_hash": CONFIG_SHA256, "source_hash": SOURCE_SHA256,
-            "source_parent_commit": SOURCE_COMMIT,
-            "training_backend_identity_hash": TRAINING_BACKEND_SHA256,
-        },
-        "source_fingerprint": dict(verified), "runtime": dict(EXPECTED_RUNTIME),
-        "evaluation": dict(_EVALUATION), "readiness": dict(_READINESS),
+        "schema": SCHEMA, "checkpoint": block, "source_fingerprint": dict(verified),
+        "runtime": dict(runtime), "evaluation": dict(_EVALUATION), "readiness": dict(_READINESS),
         "source_environment": SOURCE_ENV, "checkpoint_environment": CHECKPOINT_ENV,
     }
 
 
-def provider_manifest(artifact: str, artifact_sha256: str) -> ModelManifest:
+def provider_manifest(artifact: str, artifact_sha256: str, *, model_version: str,
+                      training_version: str) -> ModelManifest:
+    from .identity import CONTRACT_FIELDS  # local import keeps module import surface small
     return ModelManifest.from_dict({
         "schema_version": 1, "protocol_version": 1, "artifact": artifact,
-        **dict(SEMANTIC_FIELDS), "artifact_format": DEPLOYMENT_ARTIFACT_FORMAT,
+        **dict(CONTRACT_FIELDS), "model_version": model_version,
+        "training_version": training_version, "artifact_format": DEPLOYMENT_ARTIFACT_FORMAT,
         "artifact_sha256": artifact_sha256,
         "capabilities": {"recommend": True, "next_token_policy": True},
     })
@@ -252,39 +327,15 @@ def load_descriptor(bundle: ModelBundle) -> DeploymentDescriptor:
         _fail("MANIFEST_INVALID")
     if data.get("source_environment") != SOURCE_ENV or data.get("checkpoint_environment") != CHECKPOINT_ENV:
         _fail("MANIFEST_INVALID")
-    checkpoint = data["checkpoint"]
-    expected_checkpoint = {
-        "filename": "iter000100.pt", "bytes": CHECKPOINT_BYTES, "sha256": CHECKPOINT_SHA256,
-        "schema": CHECKPOINT_SCHEMA, "algorithm": "ippo", "architecture": "v1.3",
-        "iteration": 100, "protocol_version": PROTOCOL, "classification": "evaluation_only",
-        "resume_classification": "evaluation_only", "training_resume_allowed": False,
-        "resolved_config_hash": CONFIG_SHA256, "source_hash": SOURCE_SHA256,
-        "source_parent_commit": SOURCE_COMMIT,
-        "training_backend_identity_hash": TRAINING_BACKEND_SHA256,
-    }
-    if type(checkpoint) is not dict or checkpoint.keys() != _CHECKPOINT_KEYS or checkpoint != expected_checkpoint:
-        _fail()
-    runtime = data["runtime"]
-    if type(runtime) is not dict or runtime.keys() != _RUNTIME_KEYS or runtime != dict(EXPECTED_RUNTIME):
-        _fail()
-    if type(data["evaluation"]) is not dict or data["evaluation"] != dict(_EVALUATION):
-        _fail()
-    if type(data["readiness"]) is not dict or data["readiness"] != dict(_READINESS):
-        _fail()
+    expectation = _validate_checkpoint_block(data["checkpoint"], bundle.manifest)
+    runtime = _validate_runtime_block(data["runtime"])
     return DeploymentDescriptor(
-        checkpoint=MappingProxyType(dict(checkpoint)),
+        checkpoint=MappingProxyType(dict(data["checkpoint"])),
+        checkpoint_expectation=expectation,
         source_fingerprint=_validate_source_fingerprint(data["source_fingerprint"]),
-        runtime=MappingProxyType(dict(runtime)), evaluation=MappingProxyType(dict(data["evaluation"])),
-        readiness=MappingProxyType({**data["readiness"], "live_eligible_set": tuple()}),
+        runtime=runtime, evaluation=_validate_evaluation(data["evaluation"]),
+        readiness=_validate_readiness(data["readiness"]),
         bundle_fingerprint=bundle.manifest.artifact_sha256,
-    )
-
-
-def _source_expectation(entry: Mapping[str, Any]) -> tuple[int, str]:
-    # Phase 5 established one later orchestration-only file difference. It is
-    # pinned exactly and cannot broaden the executable allowlist.
-    return _DEPLOYMENT_ONLY_SOURCE_EXCEPTIONS.get(
-        str(entry["path"]), (int(entry["bytes"]), str(entry["sha256"])),
     )
 
 
@@ -305,8 +356,7 @@ def _verify_source_tree(root: Path, fingerprint: Mapping[str, Any]) -> None:
                 raw = path.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
             except OSError:
                 raise ModelBackendError("MODEL_UNAVAILABLE") from None
-            expected = _source_expectation(entry)
-            if (len(raw), hashlib.sha256(raw).hexdigest()) != expected:
+            if (len(raw), hashlib.sha256(raw).hexdigest()) != (entry["bytes"], entry["sha256"]):
                 raise ModelBackendError("MODEL_VERSION_UNSUPPORTED")
 
 
@@ -426,8 +476,7 @@ class _VerifiedPackageFinder(importlib.abc.MetaPathFinder):
                 if is_package:
                     module_name = module_name[:-len(".__init__")]
                 path = (source_root / Path(*relative.split("/"))).resolve()
-                expected_bytes, expected_sha256 = _source_expectation(entry)
-                modules[module_name] = (path, is_package, expected_bytes, expected_sha256)
+                modules[module_name] = (path, is_package, entry["bytes"], entry["sha256"])
         return cls(source_root, modules, native_path, frozenset(sys.modules))
 
     def find_spec(self, fullname: str, path=None, target=None):
@@ -523,6 +572,7 @@ def resolve_environment(descriptor: DeploymentDescriptor) -> ResolvedDeployment:
         raise ModelBackendError("MODEL_UNAVAILABLE")
     source_root = _strict_external_path(source_value, directory=True)
     checkpoint_path = _strict_external_path(checkpoint_value, directory=False)
+    runtime = descriptor.runtime
     if checkpoint_path.name != descriptor.checkpoint["filename"]:
         raise ModelBackendError("ARTIFACT_MISSING")
     checkpoint_sha, checkpoint_bytes = _sha256_file(checkpoint_path)
@@ -530,12 +580,11 @@ def resolve_environment(descriptor: DeploymentDescriptor) -> ResolvedDeployment:
             or checkpoint_bytes != descriptor.checkpoint["bytes"]):
         raise ModelBackendError("ARTIFACT_HASH_MISMATCH")
     _verify_source_tree(source_root, descriptor.source_fingerprint)
-    expected_native_path = source_root / str(descriptor.runtime["native_filename"])
-    expected_native_path = source_root / "nanopokerlib" / expected_native_path.name
+    expected_native_path = source_root / "nanopokerlib" / str(runtime["native_filename"])
     _reject_reparse_chain(expected_native_path)
     locked_native = _lock_native_artifact(expected_native_path.resolve())
-    if (locked_native.sha256 != descriptor.runtime["native_sha256"]
-            or locked_native.bytes != descriptor.runtime["native_bytes"]):
+    if (locked_native.sha256 != runtime["native_sha256"]
+            or locked_native.bytes != runtime["native_bytes"]):
         locked_native.close()
         raise ModelBackendError("ARTIFACT_HASH_MISMATCH")
     try:
@@ -552,21 +601,21 @@ def resolve_environment(descriptor: DeploymentDescriptor) -> ResolvedDeployment:
         model_module = importlib.import_module("guandan_marvel.model")
         build = native.get_backend_build_identity()
         _verify_source_tree(source_root, descriptor.source_fingerprint)
-        if (platform.system() != descriptor.runtime["os_name"]
-                or platform.python_implementation() != descriptor.runtime["python_implementation"]
-                or platform.python_version() != descriptor.runtime["python_version"]
-                or (sys.implementation.cache_tag or "") != descriptor.runtime["python_cache_tag"]
-                or struct.calcsize("P") * 8 != descriptor.runtime["pointer_bits"]
-                or str(torch.__version__) != descriptor.runtime["torch_version"]
-                or str(torch.version.cuda or "cpu") != descriptor.runtime["torch_cuda"]):
+        if (platform.system() != runtime["os_name"]
+                or platform.python_implementation() != runtime["python_implementation"]
+                or platform.python_version() != runtime["python_version"]
+                or (sys.implementation.cache_tag or "") != runtime["python_cache_tag"]
+                or struct.calcsize("P") * 8 != runtime["pointer_bits"]
+                or str(torch.__version__) != runtime["torch_version"]
+                or str(torch.version.cuda or "cpu") != runtime["torch_cuda"]):
             raise ModelBackendError("RUNTIME_UNSUPPORTED")
         if (not isinstance(build, Mapping)
-                or build.get("extension_filename") != descriptor.runtime["native_filename"]
-                or build.get("extension_sha256") != descriptor.runtime["native_sha256"]
-                or build.get("embedded_source_sha256") != descriptor.runtime["native_source_sha256"]
-                or build.get("compiler") != descriptor.runtime["compiler"]
-                or build.get("cxx_standard") != descriptor.runtime["cxx_standard"]
-                or build.get("python_cache_tag") != descriptor.runtime["python_cache_tag"]
+                or build.get("extension_filename") != runtime["native_filename"]
+                or build.get("extension_sha256") != runtime["native_sha256"]
+                or build.get("embedded_source_sha256") != runtime["native_source_sha256"]
+                or build.get("compiler") != runtime["compiler"]
+                or build.get("cxx_standard") != runtime["cxx_standard"]
+                or build.get("python_cache_tag") != runtime["python_cache_tag"]
                 or build.get("source_matches_loaded_binary") is not True):
             raise ModelBackendError("MODEL_VERSION_UNSUPPORTED")
         for module in (config_module, model_module):
@@ -587,9 +636,13 @@ def resolve_environment(descriptor: DeploymentDescriptor) -> ResolvedDeployment:
             cxx_standard=int(build["cxx_standard"]), backend="cpp", protocol_version=PROTOCOL,
         )
         identity.validate(); require_platform_distinct_from_training(identity)
-        if identity.identity_sha256 != descriptor.runtime["identity_sha256"]:
+        if identity.identity_sha256 != runtime["identity_sha256"]:
             raise ModelBackendError("MODEL_VERSION_UNSUPPORTED")
-        checkpoint_bundle = ModelBundle(fixed_manifest(checkpoint_path.name), checkpoint_path.parent)
+        expectation = descriptor.checkpoint_expectation
+        checkpoint_bundle = ModelBundle(checkpoint_manifest(
+            checkpoint_path.name, expectation.sha256,
+            model_version=expectation.model_version,
+            training_version=expectation.training_version), checkpoint_path.parent)
         checkpoint_bundle.verify()
         locked_native.close()
         return ResolvedDeployment(descriptor, checkpoint_bundle, source_root, identity, bootstrap)
@@ -604,7 +657,6 @@ def resolve_environment(descriptor: DeploymentDescriptor) -> ResolvedDeployment:
 
 
 __all__ = [
-    "CHECKPOINT_ENV", "DeploymentDescriptor", "EXPECTED_DEPLOYMENT_SHA256", "EXPECTED_RUNTIME",
-    "ResolvedDeployment", "SCHEMA", "SOURCE_ENV",
-    "deployment_payload", "load_descriptor", "provider_manifest", "resolve_environment",
+    "CHECKPOINT_ENV", "DeploymentDescriptor", "ResolvedDeployment", "SCHEMA", "SOURCE_ENV",
+    "build_deployment", "load_descriptor", "provider_manifest", "resolve_environment",
 ]

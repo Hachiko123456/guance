@@ -4,15 +4,29 @@
 
 Guance 面向 Windows 10/11 x64。在用户明确授权的本机环境中读取服务端牌局消息，将二进制记录转换为可校验的公开动作，再由本地 FableDan 模型给出候选建议。它不接管游戏操作，最终选择与实际出牌始终由用户完成。
 
-> **本地 experimental/evaluation-only 候选，不是 production release。** 当前源码候选包含已实现的协议解析、公开+self 状态重建、浮窗、模型后端和 runtime 生命周期修正，并已完成 Candidate 9 模型切换事务修复后的可复现 no-capture package 复验。Candidate 9 的 no-capture package 排除独立 Python 3.14 capture helper，因此 capture capability 不可用；显式模型选择在保存、加载或清理失败时会撤销旧 client，阻断旧回调与后续提交；失败后仅能通过新的显式选择恢复。冻结包内 external MARVEL 保持 unavailable/fail-closed，不会回退到其他 provider；本地 FableDan 已通过 frozen load/recommend/close/stop 验证。`production_ready=false`、full live coverage=`BLOCKED`、real live V2 positive artifact=`UNVERIFIED`、`publish=false`。
+> **本地 experimental/evaluation-only 候选，不是 production release。**
+> Phase 1–6 与 GPU Repair-1 已独立通过；**Phase 7 为 PAUSED / NOT STARTED / NOT AUTHORIZED**。
+> 当前源码可在隔离 CUDA 环境完成离线 `auto→GPU` 推理，无 CUDA 时同一模型 `→CPU`。
+> 2026-10-20 最终本地交付新增 `marvel-gpu` 构建 profile：从最终本地 commit 导出的
+> onedir 包内包含 `torch 2.13.0+cu126`、CUDA DLL、冻结 MARVEL source/native、真实
+> iter2000 checkpoint 与 descriptor，默认 `auto` 在本机使用 `cuda:0`，无可用 CUDA 时
+> 同一权重回退 CPU，强制 `cuda` 失败不回退。该包仅限本机 local evaluation，
+> 跨机/不同驱动未验证；实时采集包仍为 **NOT_IMPLEMENTED / NOT_AUTHORIZED**。
+> `production_ready=false`、`strength_claim=false`、`recommendation displayed`/
+> `live input`=`UNVERIFIED`、`publish=false`、`REDISTRIBUTION_NOT_AUTHORIZED`。
+> 当前权威状态见 [项目状态与能力矩阵](docs/PROJECT_STATUS.md)，操作步骤见
+> [离线交付与运行手册](docs/OFFLINE_DELIVERY.md)。
 
 ## 导航
 
 - [功能与边界](#功能与边界)
+- [项目状态与能力矩阵](docs/PROJECT_STATUS.md)
+- [离线交付与运行手册](docs/OFFLINE_DELIVERY.md)
 - [快速开始](#快速开始)
 - [技术栈](#技术栈)
 - [架构与数据流](#架构与数据流)
 - [模型后端架构](docs/MODEL_BACKENDS.md)
+- [GPU 推理与设备策略](docs/GPU_INFERENCE.md)
 - [报文如何变成牌局](#报文如何变成牌局)
 - [牌码与座位](#牌码与座位)
 - [本地模型如何工作](#本地模型如何工作)
@@ -22,7 +36,6 @@ Guance 面向 Windows 10/11 x64。在用户明确授权的本机环境中读取�
 - [目录与阅读路线](#目录与阅读路线)
 - [已知限制](#已知限制)
 - [贡献与第三方说明](#贡献与第三方说明)
-- [模型后端架构](docs/MODEL_BACKENDS.md)
 - [完整文档](#完整文档)
 
 ## 功能与边界
@@ -61,7 +74,7 @@ py -3.12 -m venv .venv
 
 首次启动先查看授权说明，不要在不知情时安装证书或开始采集。要查看演示，请在界面选择离线演示入口，不需要真实牌局。
 
-**CLI 注意：** 当前入口虽解析 `--demo`、`--screenshot` 参数，但已检查的 GUI 启动代码没有消费这两个参数。不要把 `python -m guance --demo` 当成隔离演示保证。`--exit-after 3` 只安排自动退出，不会禁用 GUI 初始化、副作用或恢复流程。
+**CLI 注意：** 当前入口虽解析 `--demo`、`--screenshot` 参数，但已检查的 GUI 启动代码没有消费这两个参数。不要把 `python -m guance --demo` 当成隔离演示保证。`--exit-after 3` 只安排自动退出，不会禁用 GUI 初始化、副作用或恢复流程。`--frozen-smoke` 是包验收用的有界无网络入口，不是用户演示模式，也不能证明真实 live/model recommendation display。
 
 ### 3. 准备模型
 
@@ -186,7 +199,7 @@ code = (copy_index << 8) | (suit_code << 4) | rank_code
 
 客户端使用容量为 1 的待处理请求队列，优先保留最新局面。推理在独立进程运行，限制数值库线程；超时或 worker 异常时清理进程，不静默切换成规则推荐。候选 `score` 是模型评分，不应显示为经过校准的胜率。
 
-`guandan_marvel_v2` 当前仅为 experimental/evaluation-only 本地接线：固定 checkpoint 可在显式 deployment bundle 下完成受限加载，但现有 live public+self 状态仍不完整，因此 UI/provider 显示 unavailable 而不是 ready。其 `marvel_v2_policy_path_score` 只标为策略/路径分数（非胜率）；`production_ready=false`，不替代默认 FableDan。详见 `docs/MODEL_BACKENDS.md`。
+`guandan_marvel_v2` 当前为 experimental/evaluation-only 本地接线：固定 checkpoint 可在显式 deployment bundle 下完成受限加载；confirmed decision 请求仅在离线显式 bundle 下 ready，现有 live public+self 状态仍不完整，因此 public view 显示 unavailable 而不是 ready。其 `marvel_v2_policy_path_score` 只标为策略/路径分数（非胜率）；`production_ready=false`，不替代默认 FableDan。详见 `docs/MODEL_BACKENDS.md` 与 `docs/GPU_INFERENCE.md`。
 
 ## 界面与线程
 
@@ -220,14 +233,20 @@ git diff --check
 
 以上是验收命令，不是本次全量测试通过声明。offscreen 测试不能证明真实桌面点击、DPI、多屏、证书或代理已经验收。
 
-本次将手工维护的 [Guance.spec](Guance.spec) 纳入版本控制。准备好本地模型、图标和完整采集 runtime 后，可显式使用该规格构建：
+[Guance.spec](Guance.spec) 是维护中的构建入口；`scripts/build_release.py` 是受支持的安全构建路径，支持 `--exclude-capture-runtime` 和自定义 `--dist-dir`/`--work-dir`（必须位于 `build/acceptance/` 且互不重叠）。完整采集包需要先准备本地模型、图标和 `runtime/mitmproxy`：
 
 ```powershell
 .\.venv\Scripts\python.exe scripts/prepare_runtime.py
-.\.venv\Scripts\python.exe -m PyInstaller --noconfirm --distpath release --workpath build/pyinstaller Guance.spec
+.\.venv\Scripts\python.exe -B scripts\build_release.py --dist-dir build\acceptance\<task>\package\dist --work-dir build\acceptance\<task>\package\work
 ```
 
-**本次不提交本地修改过的构建脚本。** 基线 `scripts/build_release.py` 仍是旧命令行构建路径，可能重新生成同名 spec；使用本次保存的规格时请采用上面的显式命令。如何准备路径和资产、如何验证完整 onedir 目录见 [BUILD](docs/BUILD.md) 与 [RELEASE](docs/RELEASE.md)。
+本轮评估包明确排除 capture helper：
+
+```powershell
+.\.venv\Scripts\python.exe -B scripts\build_release.py --exclude-capture-runtime --dist-dir build\acceptance\<task>\package\dist --work-dir build\acceptance\<task>\package\work
+```
+
+构建后验证完整 `Guance/` onedir，不只 `Guance.exe`。包身份、能力清单、smoke 和回滚步骤见 [离线交付与运行手册](docs/OFFLINE_DELIVERY.md)、[BUILD](docs/BUILD.md) 与 [RELEASE](docs/RELEASE.md)。
 
 ## 目录与阅读路线
 
@@ -257,19 +276,24 @@ Guance.spec                手工维护的构建规格
 - 已提交源码仍有本人座位字段解释问题；新的证据确认逻辑需独立合并和验收。
 - 历史回放路径存在与 `ActionEvent` 构造签名不一致的代码，不能宣称历史回放端到端可用；详见协议文档。
 - 模型、图标和采集 runtime 不是源码克隆后自动具备的资产。
-- 本次不包含业务/UI 修复，也不是软件发布；本地未完成验收的功能不会因文档更新变为“已通过”。
+- fresh no-capture 评估包不包含 Torch/MARVEL/capture；自包含 frozen CUDA 与跨机交付未实现/未验证。
+- `recommendation displayed` 与 `live input` 仍 **UNVERIFIED**；GUI smoke 成功不等于真实推荐显示。
+- 当前源码尚未全部提交；Git 纳管与远端备份需用户另行授权，remote freshness **UNVERIFIED**。
+- 仓库根没有许可证；第三方与权重的再分发权利未确认，`REDISTRIBUTION_NOT_AUTHORIZED`。
 - 未知玩法、进贡还贡、复杂重连与其他网络组合需追加证据和回归，不靠猜测兼容。
 
 ## 贡献与第三方说明
 
 提交前保留层间边界，为修复补充回归测试，并按 [验收标准](docs/ACCEPTANCE_STANDARD.md) 记录通过、失败、跳过和未验证项。不要提交模型、真实抓包、CA 私钥、账户凭据、个人日志或本机代理设置。
 
-仓库目前没有为项目自有代码提供根目录许可证文件，本次不会擅自选择许可证。上游 FableDan 代码保留 [许可证](src/guance/infrastructure/model/fabledan_vendor/FABLEDAN_LICENSE) 和 [revision](src/guance/infrastructure/model/fabledan_vendor/FABLEDAN_REVISION)；公共文档去品牌化不删除第三方署名与许可证。权重的使用和再分发也应单独确认。
+仓库目前没有为项目自有代码提供根目录许可证文件，本次不会擅自选择许可证。上游 FableDan 代码保留 [许可证](src/guance/infrastructure/model/fabledan_vendor/FABLEDAN_LICENSE) 和 [revision](src/guance/infrastructure/model/fabledan_vendor/FABLEDAN_REVISION)；公共文档去品牌化不删除第三方署名与许可证。权重的使用和再分发也应单独确认。完整清单与待确认事项见 [第三方依赖与再分发](docs/THIRD_PARTY_AND_REDISTRIBUTION.md)。
 
 ## 完整文档
 
 | 文档 | 内容 |
 |---|---|
+| [项目状态与能力矩阵](docs/PROJECT_STATUS.md) | 阶段状态、能力矩阵、交付分类与产品边界 |
+| [离线交付与运行手册](docs/OFFLINE_DELIVERY.md) | 源码 GPU/CPU 启动、离线检查、构建、解压运行、回滚 |
 | [用户指南](docs/USER_GUIDE.md) | 安装、启动、授权、演示、停止、浮窗与排障 |
 | [架构](docs/ARCHITECTURE.md) | 分层、线程/进程、数据流、状态与安全边界 |
 | [协议字段字典](docs/PROTOCOL.md) | 头部偏移、wire 类型、命令字段、历史格式、证据等级 |
@@ -279,6 +303,8 @@ Guance.spec                手工维护的构建规格
 | [诊断](docs/DIAGNOSTICS.md) | 日志、错误定位和恢复路径 |
 | [构建](docs/BUILD.md) | 依赖、本地资产、spec、打包命令和检查 |
 | [发布](docs/RELEASE.md) | 目录交付、验收、版本与目标机检查 |
+| [GPU 推理](docs/GPU_INFERENCE.md) | 设备策略、契约、隔离环境、验收与回滚 |
+| [第三方与再分发](docs/THIRD_PARTY_AND_REDISTRIBUTION.md) | 依赖、许可证与待确认的再分发事项 |
 | [验收入口](docs/ACCEPTANCE.md) | 验收材料和本次文档提交边界 |
 | [验收标准](docs/ACCEPTANCE_STANDARD.md) | P0/P1/P2 门槛和证据格式 |
 | [UI 验收](docs/UI_ACCEPTANCE.md) | 控件动作、预期状态和实机限制 |

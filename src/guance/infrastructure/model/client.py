@@ -12,17 +12,29 @@ import uuid
 from typing import Any
 
 from guance.contracts import (CanonicalAdviceResult, CanonicalPublicGameView, GameObservation,
-                               ModelStatusSnapshot, validate_advice_for_view)
+                               ConfirmedDecisionRecommendationRequest, ModelRecommendationRequest,
+                               ModelStatusSnapshot, PublicRecommendationRequest, RequestIdentity,
+                               recommendation_request_kind, validate_advice_for_view)
 from guance.ports.model import ModelBackendError, ModelSource, ResultCallback, StatusCallback, public_error
 from .codec import IDENTITY_FIELDS, dumps, envelope, read_message, safe_metadata
 from .manifest import MAX_MANIFEST_BYTES, sha256_file, strict_json
+from .marvel_v2.decision_request import parse_confirmed_decision
 
 _WORKER_BOOTSTRAP = (
     "import runpy,sys;"
+    "sys.dont_write_bytecode=True;"
     "trusted_root=sys.argv.pop(1);"
     "sys.path.insert(0,trusted_root);"
     "runpy.run_module('guance',run_name='__main__')"
 )
+
+# Bounded cold-load handshake. Measured on this host: GPU worker cold load is
+# ~23 s (Python + Torch + verified source + checkpoint + model construction),
+# well above the historical fixed 12 s that produced a spurious MODEL_NOT_READY.
+# 180 s leaves margin for a cold disk/antivirus while remaining bounded; it is
+# not an unbounded retry and still fails closed with MODEL_TIMEOUT.
+LOAD_TIMEOUT_SECONDS = 180.0
+MAX_LOAD_TIMEOUT_SECONDS = 600.0
 
 
 def _selected_source_fingerprint(source: Path) -> str:
@@ -63,12 +75,20 @@ def _selected_source_provider(source: Path) -> str:
 class InferenceClient:
     def __init__(self, weights_path: ModelSource | None = None, *, source: ModelSource | None = None,
                  on_result: ResultCallback, on_status: StatusCallback,
-                 timeout_seconds: float = 2.0, threads: int = 2) -> None:
+                 timeout_seconds: float = 2.0, threads: int = 2,
+                 requested_device: str = "auto",
+                 load_timeout_seconds: float = LOAD_TIMEOUT_SECONDS) -> None:
+        from .device_policy import normalize_requested_device
         if source is not None and weights_path is not None:
             raise ValueError("Specify one model source")
         selected = source if source is not None else weights_path
         if not isinstance(selected, (Path, str)) or not str(selected).strip():
             raise ModelBackendError("MODEL_SOURCE_INVALID")
+        if (type(load_timeout_seconds) not in (int, float)
+                or not 0.05 <= float(load_timeout_seconds) <= MAX_LOAD_TIMEOUT_SECONDS):
+            raise ModelBackendError("MODEL_INPUT_INVALID")
+        self.requested_device = normalize_requested_device(requested_device)
+        self.load_timeout = float(load_timeout_seconds)
         self.source = Path(selected).resolve()
         self.weights_path = self.source  # Explicit legacy constructor compatibility.
         self.source_fingerprint = _selected_source_fingerprint(self.source)
@@ -107,29 +127,37 @@ class InferenceClient:
             self._thread = threading.Thread(target=self._run, name="guance-model", daemon=True)
             self._thread.start()
 
-    def submit(self, observation: GameObservation | CanonicalPublicGameView) -> str | None:
-        try:
-            view = (CanonicalPublicGameView.from_observation(observation)
-                    if isinstance(observation, GameObservation) else observation)
-            view = CanonicalPublicGameView.from_dict(view.to_dict())
-        except Exception as exc:
-            self.invalidate()
-            self._notify_status({"model_status": "error", **public_error(exc, "MODEL_INPUT_INVALID")})
-            return None
+    def submit(self, request: ModelRecommendationRequest, *,
+               timeout_seconds: float | None = None) -> str | None:
+        kind = recommendation_request_kind(request)
+        if kind == "public":
+            try:
+                view = CanonicalPublicGameView.from_dict(request.view.to_dict())
+            except Exception as exc:
+                self.invalidate()
+                self._notify_status({"model_status": "error", **public_error(exc, "MODEL_INPUT_INVALID")})
+                return None
+            request = PublicRecommendationRequest(request.identity, view)
+        else:
+            # Strict client-side DTO rejection before the payload can reach the wire.
+            parse_confirmed_decision(request.decision)
+        identity = request.identity
         request_id = uuid.uuid4().hex
         with self._lock:
             if self._closed:
                 raise ModelBackendError("MODEL_CLOSED")
             self._generation += 1
             request_identity = {
-                "request_id": request_id, "session_id": view.session_id, "game_id": view.game_id,
-                "state_version": view.state_version, "epoch": self._epoch,
-                "generation": self._generation,
+                "request_id": request_id, "session_id": identity.session_id,
+                "game_id": identity.game_id, "state_version": identity.state_version,
+                "epoch": self._epoch, "generation": self._generation,
             }
             self._latest_identity = dict(request_identity)
-            self._latest_key = view.key
+            self._latest_key = identity.key
             self._drain_requests()
-            self._requests.put_nowait((request_identity, view, request_id))
+            self._requests.put_nowait((request, request_identity, request_id,
+                                       self.timeout if timeout_seconds is None
+                                       else max(0.2, float(timeout_seconds))))
         self.start()
         return request_id
 
@@ -166,7 +194,8 @@ class InferenceClient:
         env.pop("PYTHONPATH", None)
         env.pop("PYTHONHOME", None)
         env.update(PYTHONUTF8="1", PYTHONIOENCODING="utf-8",
-                   PYTHONNOUSERSITE="1", PYTHONSAFEPATH="1")
+                   PYTHONNOUSERSITE="1", PYTHONSAFEPATH="1",
+                   PYTHONDONTWRITEBYTECODE="1")
         for key in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
             env[key] = str(self.threads)
         if getattr(sys, "frozen", False):
@@ -174,7 +203,8 @@ class InferenceClient:
         else:
             trusted_root = str(Path(__file__).resolve().parents[3])
             command = [sys.executable, "-I", "-X", "utf8", "-c", _WORKER_BOOTSTRAP, trusted_root]
-        command += ["--model-worker", "--threads", str(self.threads)]
+        command += ["--model-worker", "--threads", str(self.threads),
+                    "--device", self.requested_device]
         flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
         return command, env, flags
 
@@ -190,6 +220,7 @@ class InferenceClient:
         command, env, flags = self._worker_process_spec()
         responses: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=16)
         self._responses = responses
+        first: dict[str, Any] | None = None
         try:
             with self._process_lock:
                 if self._stop.is_set():
@@ -224,9 +255,15 @@ class InferenceClient:
             load_ids = {"request_id": uuid.uuid4().hex, "session_id": "", "game_id": "",
                         "state_version": 0, "epoch": load_epoch, "generation": load_generation}
             self._send(envelope("load", load_ids, source=str(self.source)))
-            deadline = time.monotonic() + 12
+            deadline = time.monotonic() + self.load_timeout
             while True:
-                first = responses.get(timeout=max(0.001, deadline - time.monotonic()))
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise ModelBackendError("MODEL_TIMEOUT")
+                try:
+                    first = responses.get(timeout=max(0.001, remaining))
+                except queue.Empty:
+                    raise ModelBackendError("MODEL_TIMEOUT") from None
                 if first.get("type") in {"reader_error", "exited"}:
                     raise ModelBackendError("MODEL_UNAVAILABLE")
                 if any(first.get(name) != load_ids[name] for name in IDENTITY_FIELDS):
@@ -262,7 +299,12 @@ class InferenceClient:
             if not self._stop.is_set():
                 error = public_error(exc, "MODEL_LOAD_FAILED")
                 status = "unavailable" if error["error_code"] == "MODEL_UNAVAILABLE" else "error"
-                self._notify_status({"model_status": status, **error})
+                payload = {"model_status": status, **error}
+                if isinstance(first, dict) and isinstance(first.get("device"), dict):
+                    device = safe_metadata(first["device"])
+                    if device:
+                        payload["metadata"] = device
+                self._notify_status(payload)
             self._terminate()
             return False
 
@@ -281,10 +323,11 @@ class InferenceClient:
                     continue
                 if pending is None:
                     break
-                request_identity, view, request_id = pending
+                request, request_identity, request_id, request_timeout = pending
                 with self._lock:
                     current = (request_identity == self._latest_identity
-                               and view.key == self._latest_key and not self._closed)
+                               and request.identity.key == self._latest_key
+                               and not self._closed)
                 if not current:
                     continue
                 ids = dict(request_identity)
@@ -298,9 +341,14 @@ class InferenceClient:
                             "message": "当前公开局面尚不满足该实验模型的输入条件。",
                             "metadata": self._loaded_metadata})
                         continue
-                    self._send(envelope("recommend", ids, observation=view.to_dict()))
+                    kind = recommendation_request_kind(request)
+                    if kind == "public":
+                        body = {"request_kind": kind, "observation": request.view.to_dict()}
+                    else:
+                        body = {"request_kind": kind, "decision": dict(request.decision)}
+                    self._send(envelope("recommend", ids, **body))
                     started = time.monotonic()
-                    reply = self._responses.get(timeout=self.timeout)
+                    reply = self._responses.get(timeout=request_timeout)
                     if any(reply.get(name) != ids[name] for name in IDENTITY_FIELDS):
                         raise ModelBackendError("RESPONSE_MISMATCH")
                     if reply.get("type") == "error":
@@ -309,15 +357,18 @@ class InferenceClient:
                         raise ModelBackendError("PROTOCOL_INVALID")
                     from guance.contracts import decode_canonical_advice
                     result = decode_canonical_advice(reply.get("result"))
-                    if result.key != view.key or result.request_id != ids["request_id"]:
+                    if result.key != request.identity.key or result.request_id != ids["request_id"]:
                         raise ModelBackendError("RESPONSE_MISMATCH")
-                    validate_advice_for_view(view, result)
+                    if kind == "public":
+                        validate_advice_for_view(request.view, result)
+                    else:
+                        result.to_dict()
                     if (result.status != "ready" or result.error_code or result.error_message):
                         raise ModelBackendError("MODEL_OUTPUT_INVALID")
                     with self._lock:
                         current = (request_identity == self._latest_identity
-                                   and view.key == self._latest_key and not self._closed)
-                        deliver = current and time.monotonic() - started <= self.timeout
+                                   and request.identity.key == self._latest_key and not self._closed)
+                        deliver = current and time.monotonic() - started <= request_timeout
                         closed = self._closed
                     if deliver:
                         self.on_result(result)
@@ -393,7 +444,8 @@ class InferenceClient:
 
 def default_client_factory(source: ModelSource, *, on_result: ResultCallback,
                            on_status: StatusCallback, timeout_seconds: float,
-                           threads: int) -> InferenceClient:
+                           threads: int, requested_device: str = "auto") -> InferenceClient:
     """Composition-root factory for the concrete JSONL client."""
     return InferenceClient(source, on_result=on_result, on_status=on_status,
-                           timeout_seconds=timeout_seconds, threads=threads)
+                           timeout_seconds=timeout_seconds, threads=threads,
+                           requested_device=requested_device)

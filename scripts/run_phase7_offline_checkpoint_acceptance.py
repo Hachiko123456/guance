@@ -19,7 +19,10 @@ from guance.domain.session import SessionEngine  # noqa: E402
 from guance.infrastructure.capture.live_subset import NormalExchangeLiveSubsetProvider  # noqa: E402
 from guance.infrastructure.model.manifest import ModelBundle  # noqa: E402
 from guance.infrastructure.model.marvel_v2.contracts import MarvelEvent  # noqa: E402
-from guance.infrastructure.model.marvel_v2.identity import fixed_manifest  # noqa: E402
+from guance.infrastructure.model.marvel_v2.checkpoint import (  # noqa: E402
+    CheckpointExpectation, _restricted_load,
+)
+from guance.infrastructure.model.marvel_v2.identity import checkpoint_manifest  # noqa: E402
 from guance.infrastructure.model.marvel_v2.runtime import MarvelV2DemoRuntime  # noqa: E402
 from guance.infrastructure.protocol import live  # noqa: E402
 
@@ -126,6 +129,28 @@ def _decision_model_identity(decision) -> str:
     return _hash_json(value)
 
 
+def _legacy_expectation(checkpoint: Path) -> CheckpointExpectation:
+    """Local expectation for the legacy Phase 7 pinned iter000100 artifact."""
+    data = checkpoint.read_bytes()
+    payload = _restricted_load(data)
+    return CheckpointExpectation(
+        filename=checkpoint.name, bytes=len(data),
+        sha256=hashlib.sha256(data).hexdigest(),
+        schema=payload["schema"], algorithm=payload["algorithm"],
+        architecture=payload["architecture"], protocol_version=payload["protocol_version"],
+        iteration=payload["iteration"], classification="evaluation_only",
+        resume_classification=payload["resume_classification"],
+        training_resume_allowed=payload["training_resume_allowed"],
+        resolved_config_hash=payload["resolved_config_hash"], source_hash=payload["source_hash"],
+        source_parent_commit=payload["source_parent_commit"],
+        training_backend_identity_hash=payload["backend_identity"]["hash"],
+        payload_variant=("flat_not_smoothed_v1" if "distributed_training" not in payload
+                         else "ddp_merged_frozen_v1"),
+        model_version=f"MARVEL-V2-v1.3-iter{payload['iteration']:06d}",
+        training_version="legacy-phase7",
+    ).validate()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--evidence-root", type=Path, required=True)
@@ -194,7 +219,11 @@ def main() -> int:
 
     sys.path.insert(0, str(args.rules_root.resolve()))
     import torch
-    bundle = ModelBundle(fixed_manifest(args.checkpoint.name), args.checkpoint.parent)
+    expectation = _legacy_expectation(args.checkpoint)
+    bundle = ModelBundle(checkpoint_manifest(
+        args.checkpoint.name, expectation.sha256,
+        model_version=f"MARVEL-V2-v1.3-iter{expectation.iteration:06d}",
+        training_version=expectation.training_version), args.checkpoint.parent)
     runtime = MarvelV2DemoRuntime()
     inference = []
     invalid = 0
@@ -204,7 +233,7 @@ def main() -> int:
     confirmed_steps = 0
     hook_state = {"count": 0, "finite": True}
     try:
-        runtime.load(bundle)
+        runtime.load(bundle, expectation)
         handle = runtime._model.logit_head.register_forward_hook(
             lambda _module, _inputs, output: hook_state.update(
                 count=hook_state["count"] + 1,
@@ -310,7 +339,7 @@ def main() -> int:
         runtime.close()
     summary = {
         "schema": "guance-phase7-offline-checkpoint-acceptance-v1",
-        "checkpoint_sha256": fixed_manifest(args.checkpoint.name).artifact_sha256,
+        "checkpoint_sha256": expectation.sha256,
         "checkpoint_read_in_place": True, "device": "cpu", "weights_only": True,
         "strict_state_dict": True, "supported_decision_count": len(decisions),
         "model_call_count": model_calls, "unsupported_model_call_count": 0,

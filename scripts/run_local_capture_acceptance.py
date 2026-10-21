@@ -1,7 +1,14 @@
-"""Phase 7 read-only acceptance for the five explicitly selected captures.
+"""Read-only acceptance for the five explicitly selected legacy captures.
 
 The command emits one bounded JSON summary. It never writes beside a capture,
 serializes a converted decision, or prints source/model input contents.
+
+All fixed inputs are frozen and hash-pinned: the rules/runtime tree is the Phase 2
+materialized runtime source (never the live Guandan worktree), the bundle is the
+Phase 2 current-schema ``marvel-v2-iter002000`` deployment descriptor, and the
+checkpoint is the fixed iter2000 artifact. The five legacy captures are fixed,
+read-only, deterministic negatives (``event_unsupported``); the model runtime
+loads fail-closed to ``unavailable`` and produces no recommendation.
 """
 from __future__ import annotations
 
@@ -18,17 +25,16 @@ CODE_ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = CODE_ROOT / "tests" / "local_capture_manifest.json"
 TASK_ID = "GMV2-P7-LOCAL-CAPTURE-ACCEPTANCE-20261013"
 SCHEMA = "guance-gmv2-phase7-local-capture-summary-v1"
-CHECKPOINT_SHA256 = "44b8a41371965279c7ce8f3e592162689e9a1b32cb4a07147f2a8ea58ff89696"
-CHECKPOINT_BYTES = 8_316_529
-EXPECTED_MODEL_SOURCE = Path(r"D:\project\guandan")
-EXPECTED_CHECKPOINT = EXPECTED_MODEL_SOURCE / (
-    "runs/M09_full_training/remote/ippo_pilot_failed_20261011/"
-    "extracted-output/evaluation_checkpoints/iter000100.pt"
-)
-EXPECTED_MODEL_MANIFEST = CODE_ROOT / (
-    "build/acceptance/guandan-marvel-v2-phase6-20261013/"
-    "experimental-bundle/manifest.json"
-)
+_PHASE2 = (CODE_ROOT / "build" / "acceptance"
+           / "guance-model-platform-20261016" / "phase2")
+CHECKPOINT_SHA256 = "af0df1eaeb67c88e467ee78bf6b0494c49d000f5733d655ee81b40351d4ca9c8"
+CHECKPOINT_BYTES = 8_588_181
+# Frozen Phase 2 materialized runtime source; the live Guandan worktree is never
+# used as a trusted rules/runtime root.
+EXPECTED_MODEL_SOURCE = _PHASE2 / "runtime" / "marvel-e5c82e7c-d7acbc8d" / "source"
+EXPECTED_CHECKPOINT = Path(
+    r"D:\project\guandan\runs\comparison_delivery\dataset\m09_candidate_iter002000.pt")
+EXPECTED_MODEL_MANIFEST = _PHASE2 / "bundles" / "marvel-v2-iter002000" / "manifest.json"
 _ALLOWED_SELECTOR_KEYS = {
     "fixture_id", "capture_id", "relative_path", "source_sha256", "expected_level",
     "expected_observer_seat", "expected_decision_count", "expected_quality", "status",

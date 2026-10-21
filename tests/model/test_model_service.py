@@ -23,8 +23,8 @@ class FakeClient:
             "provider": "test", "backend": "synthetic", "runtime": "test",
             "model_version": "v1", "capabilities": {"recommend": True, "top_n": True},
         }})
-    def submit(self, view):
-        self.submitted.append(view)
+    def submit(self, request, *, timeout_seconds=None):
+        self.submitted.append(request)
         return "request"
     def invalidate(self):
         self.invalidated += 1
@@ -62,7 +62,7 @@ def test_model_service_start_submit_invalidate_and_close(tmp_path, observation, 
     assert service.status.metadata.capabilities.recommend is True
     assert service.status.metadata.capabilities.top_n is True
     service.submit(observation)
-    assert client.submitted == [view]
+    assert [item.view for item in client.submitted] == [view]
     client.on_result(result(view))
     assert len(results) == 1
     service.invalidate()
@@ -83,10 +83,10 @@ def test_synchronous_callback_during_submit_is_delivered_after_request_identity_
     clients, results, statuses = [], [], []
 
     class SyncClient(FakeClient):
-        def submit(self, submitted_view):
-            self.submitted.append(submitted_view)
+        def submit(self, request, *, timeout_seconds=None):
+            self.submitted.append(request)
             request_id = "sync-request"
-            self.on_result(result(submitted_view, request_id))
+            self.on_result(result(request.view, request_id))
             return request_id
 
     def factory(*args, **kwargs):
@@ -243,7 +243,7 @@ def test_status_property_is_typed_and_not_callable(tmp_path):
 def test_missing_request_id_never_becomes_a_stale_result_bypass(tmp_path, view, monkeypatch):
     service, clients, results, _statuses = make_service(tmp_path)
     client = clients[0]
-    monkeypatch.setattr(client, "submit", lambda _view: None)
+    monkeypatch.setattr(client, "submit", lambda _request, **kwargs: None)
     try:
         service.submit(view)
         client.on_result(result(view))

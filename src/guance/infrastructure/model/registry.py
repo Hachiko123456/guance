@@ -10,6 +10,7 @@ from .manifest import ModelBundle, ModelManifest
 
 class ProviderFactory(Protocol):
     def validate(self, manifest: ModelManifest) -> None: ...
+    def validate_discovery(self, manifest: ModelManifest) -> None: ...
     def create(self, bundle: ModelBundle) -> ModelAdvisor: ...
 
 
@@ -27,6 +28,14 @@ class ProviderRegistry:
         if factory is None:
             raise ModelBackendError("PROVIDER_UNKNOWN")
         factory.validate(manifest)
+        return factory
+
+    def resolve_discovery(self, manifest: ModelManifest) -> ProviderFactory:
+        """Family-level resolution for catalog discovery; never selects a provider by artifact name."""
+        factory = self._providers.get(manifest.provider)
+        if factory is None:
+            raise ModelBackendError("PROVIDER_UNKNOWN")
+        factory.validate_discovery(manifest)
         return factory
 
 

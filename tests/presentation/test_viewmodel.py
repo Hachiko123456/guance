@@ -517,3 +517,89 @@ def test_phase6_candidate_score_is_labelled_non_win_rate(qapp: QApplication) -> 
     assert candidate["score"] == 0.75
     assert candidate["scoreKind"] == "marvel_v2_policy_path_score"
     assert candidate["scoreLabel"] == "策略/路径分数（非胜率）"
+
+
+def _catalog_entry(model_id: str = "fabledan-default") -> dict:
+    return {"model_id": model_id, "directory": model_id, "provider": "fabledan",
+            "backend": "numpy", "runtime_contract": "fabledan.numpy.v1",
+            "classification": "legacy", "experimental": False,
+            "production_ready": False, "strength_claim": False,
+            "artifact_sha256": "a" * 64}
+
+
+def test_catalog_projection_requests_and_bounds(qapp: QApplication) -> None:
+    vm = GuanceViewModel()
+    requested: list[str] = []
+    refreshed: list[bool] = []
+    vm.catalogModelRequested.connect(requested.append)
+    vm.catalogRefreshRequested.connect(lambda: refreshed.append(True))
+    problems = [{"directory": f"bad-{index}", "code": "MANIFEST_INVALID"} for index in range(40)]
+    vm.set_catalog([_catalog_entry()], problems, "fabledan-default", "catalog：fabledan-default")
+    expected = {key: value for key, value in _catalog_entry().items() if key != "artifact_sha256"}
+    expected["fingerprint"] = "a" * 12
+    assert vm.catalogEntries == [expected]
+    assert vm.activeModelId == "fabledan-default"
+    assert vm.activeModelSummary == "catalog：fabledan-default"
+    assert len(vm.catalogProblems) == 32
+    vm.request_catalog_model("fabledan-default")
+    vm.request_catalog_model("")
+    vm.request_catalog_model(None)
+    assert requested == ["fabledan-default"]
+    vm.request_catalog_refresh()
+    assert refreshed == [True]
+    changed: list[bool] = []
+    vm.catalogChanged.connect(lambda: changed.append(True))
+    vm.set_catalog([_catalog_entry("second")], [], "second", "catalog：second")
+    assert changed == [True]
+    assert vm.catalogEntries[0]["model_id"] == "second"
+    assert vm.catalogProblems == []
+
+
+def test_catalog_projection_ignores_malformed_payloads(qapp: QApplication) -> None:
+    vm = GuanceViewModel()
+    vm.set_catalog(["not-a-mapping", {"model_id": 7}, None], ["not-a-mapping", None], None, None)
+    assert vm.catalogEntries == [{"model_id": "", "directory": "", "provider": "", "backend": "",
+                                  "runtime_contract": "", "classification": "",
+                                  "experimental": False, "production_ready": False,
+                                  "strength_claim": False, "fingerprint": ""}]
+    assert vm.catalogProblems == []
+    assert vm.activeModelId == "" and vm.activeModelSummary == ""
+
+
+def test_model_metadata_projects_device_summary_and_separate_fallback() -> None:
+    vm = GuanceViewModel()
+    base = {
+        "status": "ready", "provider": "guandan_marvel_v2", "backend": "guandan",
+        "runtime": "torch-cuda", "runtime_contract": "marvel_v2.device.v1",
+        "model_version": "MARVEL-V2-v1.3-iter002000", "model_sha256": "a" * 64,
+    }
+    vm.apply_status({"model_state": "ready", "model_metadata": {
+        **base, "requested_device": "auto", "actual_device": "cuda:0",
+        "device_fallback": False, "device_reason": "CUDA_PROBE_OK",
+        "torch_cuda_build": "12.6",
+        "device_evidence": "params.cuda:0.78.buffers.cuda:0.2.cache.cuda:0",
+    }})
+    metadata = vm.modelMetadata
+    assert metadata["requested_device"] == "auto"
+    assert metadata["actual_device"] == "cuda:0"
+    assert metadata["device_fallback"] is False
+    assert metadata["device_reason"] == "CUDA_PROBE_OK"
+    assert metadata["torch_cuda_build"] == "12.6"
+    assert metadata["device_summary"] == "当前使用 GPU 推理（cuda:0）"
+
+    vm.apply_status({"model_state": "ready", "model_metadata": {
+        **base, "runtime": "torch-cpu", "requested_device": "auto",
+        "actual_device": "cpu", "device_fallback": True,
+        "device_reason": "CPU_ONLY_TORCH", "torch_cuda_build": "cpu",
+    }})
+    metadata = vm.modelMetadata
+    assert metadata["device_fallback"] is True
+    assert metadata["device_summary"] == \
+        "GPU 不可用，当前使用 CPU 推理：当前 Torch 为 CPU-only 构建（请求：auto）"
+
+    vm.apply_status({"model_state": "ready", "model_metadata": {
+        **base, "runtime": "torch-cpu", "requested_device": "cpu",
+        "actual_device": "cpu", "device_fallback": False,
+        "device_reason": "FORCED_CPU", "torch_cuda_build": "12.6",
+    }})
+    assert vm.modelMetadata["device_summary"] == "已强制使用 CPU 推理"

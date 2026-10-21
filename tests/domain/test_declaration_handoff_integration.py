@@ -265,6 +265,10 @@ def test_public_state_v2_consumers_are_limited_to_explicit_phase7_subset_paths()
         root / "infrastructure" / "capture" / "canonical_capture.py",
         root / "infrastructure" / "model" / "marvel_v2" / "rules_oracle.py",
         root / "infrastructure" / "model" / "marvel_v2" / "live_adapter.py",
+        # Phase 3 explicit provider-boundary consumers (bounded wire projection
+        # and real-checkpoint recommendation; no provider/tensor logic leaks).
+        root / "infrastructure" / "model" / "marvel_v2" / "decision_request.py",
+        root / "infrastructure" / "model" / "marvel_v2" / "recommendation.py",
     }
     for directory in (root / "infrastructure" / "model", root / "application"):
         for path in directory.rglob("*.py"):

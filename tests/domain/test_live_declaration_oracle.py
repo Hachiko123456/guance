@@ -10,7 +10,11 @@ from guance.infrastructure.model.marvel_v2.rules_oracle import (
 from guance.public_state_contract import guandan_card_id_to_wire
 from tests.domain.declaration_fixture_oracle import POSITIVE_VECTORS, positive_declaration, wire_level
 
-SOURCE = Path(r"D:\project\guandan")
+# Frozen materialized runtime source (hash-verified GD-RULES, Phase 2 evidence);
+# the live Guandan worktree is deliberately never used as a rules/runtime root.
+SOURCE = (Path(__file__).resolve().parents[2] / "build" / "acceptance"
+          / "guance-model-platform-20261016" / "phase2" / "runtime"
+          / "marvel-e5c82e7c-d7acbc8d" / "source")
 pytestmark = pytest.mark.skipif(not SOURCE.is_dir(), reason="verified Guandan source unavailable")
 COMBO = {
     "FULL_HOUSE": 5, "STRAIGHT": 4, "PAIR_SEQUENCE": 6,

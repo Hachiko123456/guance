@@ -11,6 +11,7 @@ def main() -> int:
     parser.add_argument("--model-bundle", default="")
     parser.add_argument("--weights", default="", help="legacy model-source alias")
     parser.add_argument("--threads", type=int, default=2)
+    parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto")
     parser.add_argument("--demo", action="store_true")
     parser.add_argument("--screenshot", default="")
     parser.add_argument("--exit-after", type=float, default=0)
@@ -36,7 +37,8 @@ def main() -> int:
         return 0
     if args.model_worker:
         from guance.infrastructure.model.worker import run
-        return run(args.model_bundle or args.weights, args.threads)
+        return run(args.model_bundle or args.weights, args.threads,
+                   requested_device=args.device)
     from guance.bootstrap import run_gui
     return run_gui(args, extra)
 

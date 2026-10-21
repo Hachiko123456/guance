@@ -16,7 +16,6 @@ from guance.public_state_contract import (
 )
 from .action_decoder import ActionCandidate
 from .contracts import ActionDeclaration
-
 RULES_IDENTITY = "rules.GD-RULES-0.1.verified"
 _SOURCE_FILES = {
     "guandan/cards.py": (9015, "dcbf3a8dbdbc910fec9d37935f83d6980bc33a308400a5aa99f00b100bb68dca"),
@@ -42,6 +41,23 @@ _RANK_WINDOWS = {
     2: tuple(tuple((15, *range(3, 15))[i:i + 2]) for i in range(12)) + ((14, 15),),
 }
 _SUIT_NAMES = ("CLUBS", "DIAMONDS", "HEARTS", "SPADES", "JOKER")
+
+
+def _public_declaration(declaration: ActionDeclaration) -> PublicDeclaration:
+    """Convert one decoded/resolved MARVEL declaration into the public DTO."""
+    if type(declaration) is not ActionDeclaration:
+        _fail("LIVE_DECLARATION_AMBIGUOUS")
+    result = PublicDeclaration(
+        family=declaration.family, declared_ranks=tuple(declaration.declared_ranks),
+        comparison_rank=declaration.comparison_rank, suit=declaration.suit,
+        length=declaration.length, canonical_cards=tuple(declaration.canonical_cards),
+        wild_assignments=tuple(
+            WildAssignment(item.physical_card, item.assigned_rank,
+                           item.assigned_suit, item.substituted)
+            for item in declaration.wild_assignments),
+        canonical_action_cards=tuple(declaration.canonical_action_cards),
+        protocol_length=declaration.protocol_length)
+    return result
 
 
 class RulesOracleError(ValueError):
@@ -81,7 +97,11 @@ def _verify_source(root: Path) -> None:
 
 def _load_verified_package(root: Path) -> tuple[ModuleType, ModuleType, ModuleType]:
     _verify_source(root)
-    namespace = "_guance_verified_gd_rules_0_1"
+    # Each verified root gets its own private namespace: two different roots in
+    # one process (e.g. a worktree fixture and the frozen runtime source) must
+    # never share cached rules modules.
+    digest = sha256(str(root.resolve()).encode("utf-8")).hexdigest()[:12]
+    namespace = f"_guance_verified_gd_rules_0_1_{digest}"
     package = sys.modules.get(namespace)
     expected_path = str((root / "guandan").resolve())
     if package is not None:
@@ -93,12 +113,18 @@ def _load_verified_package(root: Path) -> tuple[ModuleType, ModuleType, ModuleTy
         package.__path__ = [expected_path]
         package.__spec__ = ModuleSpec(namespace, loader=None, is_package=True)
         sys.modules[namespace] = package
+    # The verified source is read-only frozen material: never write bytecode
+    # caches into it from any process.
+    previous = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True
     try:
         cards = importlib.import_module(namespace + ".cards")
         combos = importlib.import_module(namespace + ".combos")
         round_module = importlib.import_module(namespace + ".round")
     except Exception:
         _fail("GD_RULES_SOURCE_UNAVAILABLE")
+    finally:
+        sys.dont_write_bytecode = previous
     _verify_source(root)
     return cards, combos, round_module
 
@@ -298,6 +324,10 @@ class VerifiedGuandanRulesOracle:
                                 phase: str, current: PublicDeclaration | None) -> tuple[ActionCandidate, ...]:
         if phase not in {"LEAD_PLAY", "FOLLOW_PLAY"}:
             _fail("LEGAL_ACTION_PHASE_UNSUPPORTED")
+        if phase == "FOLLOW_PLAY" and current is None:
+            _fail("LIVE_CURRENT_WINNING_REQUIRED")
+        if phase == "LEAD_PLAY" and current is not None:
+            _fail("LIVE_CURRENT_WINNING_UNEXPECTED")
         hand = self._cards(own_hand_wires)
         level = self._level_rank(wire_level)
         current_combo = None if current is None else self._combination_for(current, wire_level)
@@ -315,6 +345,28 @@ class VerifiedGuandanRulesOracle:
         if len(unique) != len(result) or not result:
             _fail("LEGAL_ACTIONS_UNAVAILABLE")
         return tuple(unique[key] for key in sorted(unique))
+
+    def validate_resolved_play(self, declaration: ActionDeclaration, *, wire_level: int,
+                               current: PublicDeclaration | None) -> None:
+        """Validate one fully resolved play declaration against the verified rules.
+
+        The declaration is reconstructed into the unique rules combination and,
+        when following, must beat the current winning combination. This is the
+        same oracle the decision provider uses; no second rules implementation.
+        """
+        public = _public_declaration(declaration)
+        candidate_combo = self._combination_for(public, wire_level)
+        if current is None:
+            return
+        current_combo = self._combination_for(current, wire_level)
+        try:
+            beats = bool(self.combos.can_beat(candidate_combo, current_combo))
+        except RulesOracleError:
+            raise
+        except Exception:
+            _fail("LIVE_PLAY_DOES_NOT_BEAT")
+        if not beats:
+            _fail("LIVE_PLAY_DOES_NOT_BEAT")
 
     def expected_donors(self, ranking_by_seat: tuple[int, int, int, int]) -> tuple[int, ...]:
         if tuple(sorted(ranking_by_seat)) != (1, 2, 3, 4):

@@ -3,6 +3,12 @@
 This module records runtime/native identity metadata only. It never loads a
 checkpoint, imports Torch eagerly, or claims that two platform binaries are
 byte-identical.
+
+The only module-level constants are the two training-platform distinctness pins
+(``TRAINING_NATIVE_SHA256``, ``TRAINING_PYTHON_TAG``) consumed by
+``require_platform_distinct_from_training``. There are no checkpoint, iteration
+or source-fingerprint constants here: artifact identity always comes from the
+deployment descriptor.
 """
 from __future__ import annotations
 
@@ -17,12 +23,8 @@ import json
 
 from .lifecycle_contracts import digest_fields, fail, sha256_hex
 
-TRAINING_BACKEND_SHA256 = "5b8b7300f8bb32f0892959990ff9414dce67b51bd371e1063a8d9e78894c30de"
 TRAINING_NATIVE_SHA256 = "5b9a1fd71361c27cdecafe8d6612165e8cfbdddd948b47679cfb6956f6e17a83"
-TRAINING_SOURCE_SHA256 = "2c5a26c8ca8b645f22caa40f2ec25c7bf94555d83e06d4d6fb4bc843cb275b60"
 TRAINING_PYTHON_TAG = "cpython-313"
-LOCAL_NATIVE_SOURCE_SHA256 = "40058234af8227e9f0a0aa8c555959717e277f4ac16ed5094a918a32d46f6898"
-LOCAL_NATIVE_SHA256 = "55803483a3271ddfc53a04930ad7b40c13a8ce7da6d02981a426f4b08602a9dd"
 
 
 def file_sha256(path: str | Path) -> tuple[str, int]:
@@ -136,18 +138,21 @@ def collect_deployment_identity(native_path: str | Path, *, torch_version: str,
 
 
 def require_platform_distinct_from_training(identity: DeploymentIdentity) -> None:
+    """The deployed runtime must be a local platform build, never the training (Linux) build.
+
+    Native bytes, embedded source manifest and the materialized source tree are
+    pinned by the deployment descriptor; only the two training-identity
+    inequalities are stable here.
+    """
     identity.validate()
     if identity.native_sha256 == TRAINING_NATIVE_SHA256:
         fail("deployment_native_identity_not_distinct")
     if identity.python_cache_tag == TRAINING_PYTHON_TAG:
         fail("deployment_python_identity_not_distinct")
-    if identity.native_source_sha256 != LOCAL_NATIVE_SOURCE_SHA256:
-        fail("deployment_source_identity_mismatch")
 
 
 __all__ = [
-    "DeploymentIdentity", "LOCAL_NATIVE_SHA256", "LOCAL_NATIVE_SOURCE_SHA256",
-    "TRAINING_BACKEND_SHA256", "TRAINING_NATIVE_SHA256", "TRAINING_PYTHON_TAG",
-    "TRAINING_SOURCE_SHA256", "collect_deployment_identity", "file_sha256",
-    "require_platform_distinct_from_training", "source_manifest_identity",
+    "DeploymentIdentity", "TRAINING_NATIVE_SHA256", "TRAINING_PYTHON_TAG",
+    "collect_deployment_identity", "file_sha256", "require_platform_distinct_from_training",
+    "source_manifest_identity",
 ]

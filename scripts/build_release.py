@@ -46,6 +46,26 @@ def _validate_output_paths(root: Path, dist: Path, work: Path, *, custom: bool) 
 
 
 CAPTURE_RUNTIME_ENV = "GUANCE_EXPERIMENTAL_PACKAGE_NO_CAPTURE_RUNTIME"
+PROFILE_DEFAULT = "default"
+PROFILE_MARVEL_GPU = "marvel-gpu"
+MARVEL_SITE_ENV = "GUANCE_MARVEL_SITE_PACKAGES"
+MARVEL_SOURCE_ENV = "GUANCE_MARVEL_SOURCE"
+MARVEL_CHECKPOINT_ENV = "GUANCE_MARVEL_CHECKPOINT"
+MARVEL_BUNDLE_ENV = "GUANCE_MARVEL_BUNDLE"
+EXPECTED_MARVEL_CHECKPOINT_SHA256 = (
+    "af0df1eaeb67c88e467ee78bf6b0494c49d000f5733d655ee81b40351d4ca9c8"
+)
+EXPECTED_MARVEL_CHECKPOINT_BYTES = 8588181
+_TORCH_SKIP_DIRS = {"__pycache__", "bin", "include", "share", "test"}
+_TORCH_SKIP_SUFFIXES = {".cmake", ".cpp", ".cuh", ".h", ".hpp", ".lib", ".pyc", ".pyi", ".pyo"}
+# ``torch`` imports the top-level ``torchgen`` package unconditionally (for
+# example through ``torch.utils._python_dispatch``) and imports ``sympy`` (and
+# ``mpmath`` through sympy) from ``torch.fx.experimental.symbolic_shapes``.
+# Omitting any of them makes the frozen worker report MODEL_UNAVAILABLE instead
+# of loading.  ``numpy`` is supplied by the frozen application itself.  Keep
+# this list explicit rather than copying the whole site-packages tree.
+_TORCH_RUNTIME_PACKAGES = ("torch", "torchgen", "sympy", "mpmath")
+_MARVEL_BUNDLE_FILES = ("deployment.json", "manifest.json", "SHA256SUMS")
 
 
 def _build_identity(*, exclude_capture_runtime: bool) -> str:
@@ -189,7 +209,174 @@ def _model_bundle_files(root: Path) -> list[tuple[Path, Path]]:
     return pairs
 
 
-def _validate_package(root: Path, package: Path | None = None, *, capture_runtime: bool = True) -> None:
+def _marvel_inputs() -> dict[str, Path]:
+    """Resolve and validate the explicit local-only MARVEL GPU build allowlist."""
+    values = {
+        "site_packages": os.environ.get(MARVEL_SITE_ENV, "").strip(),
+        "source": os.environ.get(MARVEL_SOURCE_ENV, "").strip(),
+        "checkpoint": os.environ.get(MARVEL_CHECKPOINT_ENV, "").strip(),
+        "bundle": os.environ.get(MARVEL_BUNDLE_ENV, "").strip(),
+    }
+    missing = [name for name, value in values.items() if not value]
+    if missing:
+        raise RuntimeError(f"marvel-gpu profile requires explicit asset env vars: {missing}")
+    resolved = {name: Path(value).resolve() for name, value in values.items()}
+    for name in ("site_packages", "source", "bundle"):
+        if not resolved[name].is_dir():
+            raise RuntimeError(f"marvel-gpu asset directory is missing: {name}={resolved[name]}")
+    if not resolved["checkpoint"].is_file():
+        raise RuntimeError(f"marvel-gpu checkpoint is missing: {resolved['checkpoint']}")
+    torch_root = resolved["site_packages"] / "torch"
+    if not (torch_root / "__init__.py").is_file():
+        raise RuntimeError(f"marvel-gpu site-packages does not contain torch: {torch_root}")
+    _sha, size = _sha256_size(resolved["checkpoint"])
+    if (_sha != EXPECTED_MARVEL_CHECKPOINT_SHA256 or size != EXPECTED_MARVEL_CHECKPOINT_BYTES):
+        raise RuntimeError("marvel-gpu checkpoint identity does not match the accepted iter2000 artifact")
+    descriptor = json.loads((resolved["bundle"] / "deployment.json").read_text(encoding="utf-8"))
+    if descriptor.get("checkpoint", {}).get("sha256") != EXPECTED_MARVEL_CHECKPOINT_SHA256:
+        raise RuntimeError("marvel-gpu descriptor does not pin the accepted iter2000 checkpoint")
+    _verify_source_tree(resolved["source"], descriptor)
+    native = resolved["source"] / "nanopokerlib" / descriptor["runtime"]["native_filename"]
+    native_sha, native_bytes = _sha256_size(native)
+    if (native_sha != descriptor["runtime"]["native_sha256"]
+            or native_bytes != descriptor["runtime"]["native_bytes"]):
+        raise RuntimeError("marvel-gpu native extension identity does not match the descriptor")
+    expected_bundle = set(_MARVEL_BUNDLE_FILES)
+    actual_bundle = {path.name for path in resolved["bundle"].iterdir() if path.is_file()}
+    if actual_bundle != expected_bundle:
+        raise RuntimeError(
+            f"marvel-gpu descriptor bundle must contain exactly {sorted(expected_bundle)}; "
+            f"found {sorted(actual_bundle)}"
+        )
+    for line in (resolved["bundle"] / "SHA256SUMS").read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        parts = line.split()
+        if len(parts) != 2:
+            raise RuntimeError("invalid marvel-gpu descriptor checksum entry")
+        checksum, relative = parts[0], parts[1].lstrip("*")
+        target = resolved["bundle"] / relative
+        if not target.is_file() or _sha256(target) != checksum:
+            raise RuntimeError(f"marvel-gpu descriptor checksum mismatch: {relative}")
+    return resolved
+
+
+def _sha256_size(path: Path) -> tuple[str, int]:
+    digest = sha256()
+    size = 0
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+            size += len(chunk)
+    return digest.hexdigest(), size
+
+
+def _verify_source_tree(source: Path, descriptor: dict) -> None:
+    """Verify every descriptor-pinned source file exactly as the runtime will."""
+    components = descriptor.get("source_fingerprint", {}).get("components", {})
+    if not isinstance(components, dict) or not components:
+        raise RuntimeError("marvel-gpu descriptor has no source fingerprint")
+    seen = 0
+    for component in components.values():
+        for entry in component.get("files", []):
+            relative = entry.get("path")
+            if not isinstance(relative, str) or not relative:
+                raise RuntimeError("invalid source fingerprint path")
+            target = source.joinpath(*PurePosixPath(relative).parts)
+            if not target.is_file():
+                raise RuntimeError(f"marvel-gpu source file is missing: {relative}")
+            raw = target.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+            if (len(raw), sha256(raw).hexdigest()) != (entry.get("bytes"), entry.get("sha256")):
+                raise RuntimeError(f"marvel-gpu source file identity mismatch: {relative}")
+            seen += 1
+    if seen < 100:
+        raise RuntimeError(f"marvel-gpu source fingerprint is unexpectedly small: {seen}")
+
+
+def _copy_file(source: Path, target: Path) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, target)
+
+
+def _install_marvel_runtime(package: Path, inputs: dict[str, Path]) -> dict[str, int]:
+    """Copy the explicit local-only runtime allowlist into the frozen package."""
+    internal = package / "_internal"
+    runtime_root = internal / "marvel_runtime"
+    site_target = runtime_root / "site-packages"
+    copied = 0
+    for package_name in _TORCH_RUNTIME_PACKAGES:
+        package_source = inputs["site_packages"] / package_name
+        if not (package_source / "__init__.py").is_file():
+            raise RuntimeError(
+                f"marvel-gpu site-packages does not contain required runtime package: {package_name}")
+        package_target = site_target / package_name
+        for path in sorted(package_source.rglob("*")):
+            if not path.is_file():
+                continue
+            relative = path.relative_to(package_source)
+            if relative.parts and relative.parts[0] in _TORCH_SKIP_DIRS:
+                continue
+            if path.suffix.lower() in _TORCH_SKIP_SUFFIXES:
+                continue
+            _copy_file(path, package_target / relative)
+            copied += 1
+    typing_extensions = inputs["site_packages"] / "typing_extensions.py"
+    if typing_extensions.is_file():
+        _copy_file(typing_extensions, site_target / "typing_extensions.py")
+    source_target = runtime_root / "source"
+    if source_target.exists():
+        shutil.rmtree(source_target)
+    shutil.copytree(inputs["source"], source_target)
+    checkpoint_target = runtime_root / "checkpoint" / inputs["checkpoint"].name
+    _copy_file(inputs["checkpoint"], checkpoint_target)
+    bundle_target = runtime_root / "bundles" / inputs["bundle"].name
+    for name in _MARVEL_BUNDLE_FILES:
+        _copy_file(inputs["bundle"] / name, bundle_target / name)
+    return {
+        "torch_files": copied,
+        "source_files": sum(1 for path in source_target.rglob("*") if path.is_file()),
+        "bundle_files": len(_MARVEL_BUNDLE_FILES),
+    }
+
+
+def _validate_marvel_package(package: Path, inputs: dict[str, Path]) -> None:
+    internal = package / "_internal"
+    runtime_root = internal / "marvel_runtime"
+    torch_root = runtime_root / "site-packages" / "torch"
+    required = [
+        torch_root / "__init__.py",
+        torch_root / "lib" / "torch_cuda.dll",
+        torch_root / "lib" / "cudart64_12.dll",
+        runtime_root / "site-packages" / "torchgen" / "__init__.py",
+        runtime_root / "site-packages" / "sympy" / "__init__.py",
+        runtime_root / "site-packages" / "mpmath" / "__init__.py",
+        runtime_root / "source" / "nanopokerlib" / "_guandan_cpp.cp312-win_amd64.pyd",
+        runtime_root / "source" / "guandan_marvel" / "__init__.py",
+        runtime_root / "checkpoint" / inputs["checkpoint"].name,
+        runtime_root / "bundles" / inputs["bundle"].name / "deployment.json",
+    ]
+    missing = [str(path) for path in required if not path.exists()]
+    if missing:
+        raise RuntimeError(f"marvel-gpu package validation failed; missing: {missing}")
+    if not any(torch_root.glob("_C*.pyd")):
+        raise RuntimeError("marvel-gpu package validation failed; torch._C extension is missing")
+    checkpoint = runtime_root / "checkpoint" / inputs["checkpoint"].name
+    digest, size = _sha256_size(checkpoint)
+    if (digest, size) != (EXPECTED_MARVEL_CHECKPOINT_SHA256, EXPECTED_MARVEL_CHECKPOINT_BYTES):
+        raise RuntimeError("marvel-gpu package validation failed; checkpoint identity mismatch")
+    descriptor = json.loads(
+        (runtime_root / "bundles" / inputs["bundle"].name / "deployment.json").read_text(encoding="utf-8"))
+    _verify_source_tree(runtime_root / "source", descriptor)
+    if (internal / "runtime" / "mitmproxy").exists():
+        raise RuntimeError("marvel-gpu package validation failed; capture runtime must be excluded")
+    if list(package.rglob("python314.dll")):
+        raise RuntimeError("marvel-gpu package validation failed; Python 3.14 payload is present")
+    if list((torch_root / "lib").glob("*.lib")):
+        raise RuntimeError("marvel-gpu package validation failed; static torch libraries are present")
+
+
+def _validate_package(root: Path, package: Path | None = None, *, capture_runtime: bool = True,
+                      marvel_inputs: dict[str, Path] | None = None) -> None:
     package = package if package is not None else root / "release" / "Guance"
     internal = package / "_internal"
     required = [
@@ -269,6 +456,11 @@ def _validate_package(root: Path, package: Path | None = None, *, capture_runtim
     if present:
         raise RuntimeError(f"package validation failed; excluded Qt payload is present: {present}")
 
+    if marvel_inputs is not None:
+        _validate_marvel_package(package, marvel_inputs)
+    elif (internal / "marvel_runtime").exists():
+        raise RuntimeError("package validation failed; MARVEL runtime is present in a non-GPU profile")
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -289,14 +481,28 @@ def main() -> int:
         "--exclude-capture-runtime", action="store_true",
         help="build an evaluation-only package without the independently frozen capture helper",
     )
+    parser.add_argument(
+        "--profile", choices=(PROFILE_DEFAULT, PROFILE_MARVEL_GPU), default=PROFILE_DEFAULT,
+        help="packaging profile; marvel-gpu adds the explicit local Torch/MARVEL allowlist",
+    )
     args = parser.parse_args()
 
     root = Path(__file__).resolve().parents[1]
+    marvel_inputs = None
+    if args.profile == PROFILE_MARVEL_GPU:
+        if not args.exclude_capture_runtime:
+            raise SystemExit("marvel-gpu profile requires --exclude-capture-runtime")
+        try:
+            marvel_inputs = _marvel_inputs()
+        except (OSError, RuntimeError, ValueError, KeyError, json.JSONDecodeError) as exc:
+            raise SystemExit(f"marvel-gpu asset validation failed: {exc}") from None
     dist = (args.dist_dir if args.dist_dir is not None else root / "release").resolve()
     work_root = (args.work_dir if args.work_dir is not None else root / "build" / "pyinstaller").resolve()
     work = _mode_work_directory(
         work_root, exclude_capture_runtime=args.exclude_capture_runtime
     ).resolve()
+    if args.profile != PROFILE_DEFAULT:
+        work = (work_root / f"{_mode_work_directory(work_root, exclude_capture_runtime=args.exclude_capture_runtime).name}-{args.profile}").resolve()
     try:
         _validate_output_paths(
             root, dist, work,
@@ -310,6 +516,7 @@ def main() -> int:
     identity = _build_identity(exclude_capture_runtime=args.exclude_capture_runtime)
     print(json.dumps({
         "build_identity": identity,
+        "profile": args.profile,
         "capture_runtime": "excluded" if args.exclude_capture_runtime else "included",
         "dist": str(dist),
         "work": str(work),
@@ -353,8 +560,12 @@ def main() -> int:
         if build.returncode:
             raise RuntimeError(f"PyInstaller failed with exit code {build.returncode}")
 
+        if marvel_inputs is not None:
+            installed = _install_marvel_runtime(dist / "Guance", marvel_inputs)
+            print(json.dumps({"marvel_runtime_installed": installed}, sort_keys=True))
         _validate_package(
-            root, dist / "Guance", capture_runtime=not args.exclude_capture_runtime
+            root, dist / "Guance", capture_runtime=not args.exclude_capture_runtime,
+            marvel_inputs=marvel_inputs,
         )
     except (OSError, RuntimeError) as exc:
         elapsed = time.perf_counter() - started

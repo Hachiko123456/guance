@@ -8,9 +8,20 @@ from typing import Any, Literal
 import math
 
 MANIFEST_SCHEMA_VERSION = 1
-WORKER_PROTOCOL_VERSION = 2
+WORKER_PROTOCOL_VERSION = 3
 CANONICAL_PUBLIC_STATE_SCHEMA_VERSION = 1
 CANONICAL_ADVICE_RESULT_SCHEMA_VERSION = 1
+# Explicit recommendation request kinds. The request kind is always carried as a
+# tag; providers are never guessed from field presence.
+PUBLIC_RECOMMENDATION_KIND = "public"
+CONFIRMED_DECISION_RECOMMENDATION_KIND = "confirmed_decision"
+PUBLIC_RECOMMENDATION_CONTRACT = "CanonicalPublicGameView.v1"
+CONFIRMED_DECISION_REQUEST_CONTRACT = "GuandanMARVELV2.ConfirmedDecision.v1"
+CONFIRMED_DECISION_REQUEST_FIELDS = frozenset({
+    "schema", "capture_id", "frame_sequence", "session_id", "game_id", "state_version",
+    "model", "marvel_state", "current_winning_declaration", "session", "history",
+    "cache_request", "decision_identity_sha256",
+})
 # Legacy alias retained for older capture/model imports. It names the public-state schema only.
 SCHEMA_VERSION = CANONICAL_PUBLIC_STATE_SCHEMA_VERSION
 
@@ -36,17 +47,22 @@ class ModelCapabilities(Mapping[str, bool]):
     top_n: bool = False
     complete_action: bool = False
     next_token_policy: bool = False
+    confirmed_decision: bool = False
     beam_search: bool = False
     belief: bool = False
     search: bool = False
     public_plus_self: bool = False
     extras: Mapping[str, bool] = field(default_factory=dict, repr=False, compare=True)
 
+    _KNOWN = ("recommend", "top_n", "complete_action", "next_token_policy",
+              "confirmed_decision", "beam_search", "belief", "search", "public_plus_self")
+
     def __post_init__(self) -> None:
         values = {
             "recommend": self.recommend, "top_n": self.top_n,
             "complete_action": self.complete_action,
             "next_token_policy": self.next_token_policy,
+            "confirmed_decision": self.confirmed_decision,
             "beam_search": self.beam_search, "belief": self.belief,
             "search": self.search, "public_plus_self": self.public_plus_self,
         }
@@ -62,25 +78,21 @@ class ModelCapabilities(Mapping[str, bool]):
     def from_mapping(cls, value: Mapping[str, bool] | None) -> "ModelCapabilities":
         if value is None:
             return cls()
-        known = {name: bool(value.get(name, False)) for name in (
-            "recommend", "top_n", "complete_action", "next_token_policy",
-            "beam_search", "belief", "search", "public_plus_self") }
+        known = {name: bool(value.get(name, False)) for name in cls._KNOWN}
         extras = {key: item for key, item in value.items() if key not in known}
         return cls(**known, extras=extras)
 
     def __getitem__(self, key: str) -> bool:
-        if key in {"recommend", "top_n", "complete_action", "next_token_policy",
-                   "beam_search", "belief", "search", "public_plus_self"}:
+        if key in self._KNOWN:
             return bool(getattr(self, key))
         return self.extras[key]
 
     def __iter__(self) -> Iterator[str]:
-        yield from ("recommend", "top_n", "complete_action", "next_token_policy",
-                    "beam_search", "belief", "search", "public_plus_self")
+        yield from self._KNOWN
         yield from self.extras
 
     def __len__(self) -> int:
-        return 8 + len(self.extras)
+        return len(self._KNOWN) + len(self.extras)
 
     def to_dict(self) -> dict[str, bool]:
         return {key: self[key] for key in self}
@@ -93,7 +105,9 @@ class ModelMetadata(Mapping[str, Any]):
     backend: str = ""
     runtime: str = ""
     runtime_version: str = ""
+    runtime_contract: str = ""
     model_version: str = ""
+    iteration: int = 0
     model_sha256: str = ""
     bundle_fingerprint: str = ""
     deployment_fingerprint: str = ""
@@ -111,6 +125,12 @@ class ModelMetadata(Mapping[str, Any]):
     production_ready: bool | None = None
     strength_claim: bool | None = None
     public_self_supported: bool | None = None
+    requested_device: str = ""
+    actual_device: str = ""
+    device_fallback: bool | None = None
+    device_reason: str = ""
+    torch_cuda_build: str = ""
+    device_evidence: str = ""
     capabilities: ModelCapabilities = field(default_factory=ModelCapabilities)
     extras: Mapping[str, Any] = field(default_factory=dict, repr=False, compare=True)
 
@@ -127,6 +147,21 @@ class ModelMetadata(Mapping[str, Any]):
         for name in ("model_sha256", "bundle_fingerprint", "deployment_fingerprint"):
             value = getattr(self, name)
             if value and (len(value) != 64 or any(c not in "0123456789abcdef" for c in value)):
+                raise ModelContractError("MODEL_OUTPUT_INVALID")
+        if type(self.iteration) is not int or self.iteration < 0:
+            raise ModelContractError("MODEL_OUTPUT_INVALID")
+        if self.requested_device not in ("", "auto", "cpu", "cuda"):
+            raise ModelContractError("MODEL_OUTPUT_INVALID")
+        if self.actual_device not in ("", "cpu", "cuda") and not (
+                self.actual_device.startswith("cuda:")
+                and self.actual_device[5:].isdigit()):
+            raise ModelContractError("MODEL_OUTPUT_INVALID")
+        if self.device_fallback is not None and type(self.device_fallback) is not bool:
+            raise ModelContractError("MODEL_OUTPUT_INVALID")
+        for name in ("device_reason", "torch_cuda_build", "device_evidence"):
+            value = getattr(self, name)
+            if not isinstance(value, str) or len(value) > 128 or any(
+                    not (char.isalnum() or char in "._:+-") for char in value):
                 raise ModelContractError("MODEL_OUTPUT_INVALID")
         object.__setattr__(self, "extras", _freeze_public_mapping(self.extras))
 
@@ -151,11 +186,14 @@ class ModelMetadata(Mapping[str, Any]):
             raise ModelContractError("MODEL_OUTPUT_INVALID")
         allowed = {
             "status", "provider", "backend", "runtime", "runtime_version",
-            "model_version", "model_sha256", "bundle_fingerprint", "deployment_fingerprint",
+            "runtime_contract", "model_version", "iteration", "model_sha256",
+            "bundle_fingerprint", "deployment_fingerprint",
             "score_kind", "classification", "formal_evaluation_status", "champion_status",
             "input_contract", "output_contract", "wire_input_contract", "wire_output_contract",
             "legacy", "test_only", "experimental", "production_ready", "strength_claim",
-            "public_self_supported", "capabilities",
+            "public_self_supported", "requested_device", "actual_device",
+            "device_fallback", "device_reason", "torch_cuda_build", "device_evidence",
+            "capabilities",
         }
         filtered = {key: item for key, item in value.items() if key in allowed}
         filtered["extras"] = {}
@@ -185,10 +223,21 @@ class ModelMetadata(Mapping[str, Any]):
             "wire_output_contract": self.wire_output_contract, "legacy": self.legacy,
             "test_only": self.test_only, "capabilities": self.capabilities.to_dict(),
         }
+        if self.runtime_contract:
+            result["runtime_contract"] = self.runtime_contract
+        if self.iteration:
+            result["iteration"] = self.iteration
         for name in ("experimental", "production_ready", "strength_claim", "public_self_supported"):
             value = getattr(self, name)
             if value is not None:
                 result[name] = value
+        for name in ("requested_device", "actual_device", "device_reason",
+                     "torch_cuda_build", "device_evidence"):
+            value = getattr(self, name)
+            if value:
+                result[name] = value
+        if self.device_fallback is not None:
+            result["device_fallback"] = self.device_fallback
         result.update(self.extras)
         # Keep lifecycle booleans explicit so consumers can distinguish a legacy
         # bundle from a modern one and a test-only runtime from production.
@@ -286,9 +335,55 @@ class RequestIdentity:
 
 
 @dataclass(frozen=True, slots=True)
-class RecommendationRequest:
+class PublicRecommendationRequest:
+    """Explicit public-view recommendation request (FableDan family)."""
+
     identity: RequestIdentity
     view: "CanonicalPublicGameView"
+
+    def validate(self) -> None:
+        if type(self.identity) is not RequestIdentity:
+            raise ModelContractError("MODEL_INPUT_INVALID")
+        self.view.validate()
+
+
+@dataclass(frozen=True, slots=True)
+class ConfirmedDecisionRecommendationRequest:
+    """Explicit confirmed-decision recommendation request (MARVEL family).
+
+    The decision payload is bounded plain data (no tensors, providers or paths).
+    Structural checks happen here; the strict schema/identity parse belongs to the
+    provider-side adapter at the infrastructure boundary.
+    """
+
+    identity: RequestIdentity
+    decision: Mapping[str, Any]
+
+    def validate(self) -> None:
+        if type(self.identity) is not RequestIdentity:
+            raise ModelContractError("MODEL_INPUT_INVALID")
+        if not isinstance(self.decision, Mapping) or set(self.decision) != CONFIRMED_DECISION_REQUEST_FIELDS:
+            raise ModelContractError("MODEL_INPUT_UNSUPPORTED")
+        if self.decision.get("schema") != CONFIRMED_DECISION_REQUEST_CONTRACT:
+            raise ModelContractError("MODEL_INPUT_UNSUPPORTED")
+        for name in ("session_id", "game_id"):
+            if self.decision.get(name) != getattr(self.identity, name):
+                raise ModelContractError("MODEL_INPUT_INVALID")
+        if self.decision.get("state_version") != self.identity.state_version:
+            raise ModelContractError("MODEL_INPUT_INVALID")
+
+
+# Backward-compatible name for the public request; the union is explicit and tagged.
+RecommendationRequest = PublicRecommendationRequest
+ModelRecommendationRequest = PublicRecommendationRequest | ConfirmedDecisionRecommendationRequest
+
+
+def recommendation_request_kind(request: ModelRecommendationRequest) -> str:
+    if type(request) is PublicRecommendationRequest:
+        return PUBLIC_RECOMMENDATION_KIND
+    if type(request) is ConfirmedDecisionRecommendationRequest:
+        return CONFIRMED_DECISION_RECOMMENDATION_KIND
+    raise ModelContractError("MODEL_INPUT_INVALID")
 
 
 def _freeze_public_value(value: Any) -> Any:

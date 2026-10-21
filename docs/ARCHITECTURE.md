@@ -117,7 +117,7 @@ SourceFrame -> ProtocolEvent -> GameState -> GameObservation -> AdviceResult
 
 ## 构建边界
 
-PyInstaller 通过 [Guance.spec](../Guance.spec) 收集应用 QML、受控 Qt/shiboken/CRT 依赖和明确允许的本地模型输入。Candidate 9 的 evaluation-only no-capture 构建显式排除 `runtime/mitmproxy`，即使该目录完全不存在也必须能够完成 spec evaluation 和构建；包内 capture capability 因此明确 unavailable。源码/development capture 模式可以使用外部 prepared helper，但只有独立兼容 runtime、完整验收和再分发审查完成后，才可以讨论把 helper 纳入其他候选。源码、模型资产、用户配置、证书和 frozen onedir package 属于不同生命周期，不能只复制 exe，也不能把本地私有输入提交到 Git。
+PyInstaller 通过 [Guance.spec](../Guance.spec) 收集应用 QML、受控 Qt/shiboken/CRT 依赖和明确允许的本地模型输入。当前 evaluation-only no-capture 构建显式排除 `runtime/mitmproxy`，即使该目录完全不存在也必须能够完成 spec evaluation 和构建；包内 capture capability 因此明确 unavailable。源码/development capture 模式可以使用外部 prepared helper，但只有独立兼容 runtime、完整验收和再分发审查完成后，才可以讨论把 helper 纳入其他候选。源码、模型资产、用户配置、证书和 frozen onedir package 属于不同生命周期，不能只复制 exe，也不能把本地私有输入提交到 Git。
 
 ## 相关入口
 
