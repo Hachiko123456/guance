@@ -29,6 +29,12 @@ EVIDENCE = CODE_ROOT / "build" / "acceptance" / "guance-final-local-gpu-delivery
 BUNDLE_RELATIVE = Path("_internal") / "marvel_runtime" / "bundles" / "marvel-v2-iter002000-device"
 PACKAGE_BUNDLE_RELATIVE = Path("_internal") / "marvel_runtime" / "bundles" / "marvel-v2-iter002000-device"
 FORBIDDEN_PARTS = {".git", "private_data", "logs", "debug", "captures", "prototypes"}
+# Vendored Torch ships its own ``debug``/``logs`` subpackages; those are runtime
+# code, not Guance captures or private logs.  Keep the hard-forbidden parts
+# everywhere and apply the Guance-local debug/log rule only outside the
+# explicit local runtime allowlist.
+STRICT_FORBIDDEN_PARTS = {".git", "private_data", "captures", "prototypes"}
+GUANCE_LOCAL_FORBIDDEN_PARTS = {"debug", "logs"}
 FORBIDDEN_NAMES = {
     "python314.dll", "proxy-lease.json", "preferences.json", "active_model.json",
     "cookie", "cookies", "authorization.json",
@@ -134,7 +140,11 @@ def cmd_audit(args: argparse.Namespace) -> int:
     forbidden = []
     for relative in files:
         pure = PurePosixPath(relative)
-        if any(part.lower() in FORBIDDEN_PARTS for part in pure.parts):
+        lowered_parts = {part.lower() for part in pure.parts}
+        if lowered_parts & STRICT_FORBIDDEN_PARTS:
+            forbidden.append(relative)
+        elif (lowered_parts & GUANCE_LOCAL_FORBIDDEN_PARTS
+              and not relative.startswith("_internal/marvel_runtime/")):
             forbidden.append(relative)
         if pure.name.lower() in FORBIDDEN_NAMES or pure.suffix.lower() in FORBIDDEN_SUFFIXES:
             forbidden.append(relative)
