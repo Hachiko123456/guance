@@ -571,7 +571,15 @@ def _fixed_record_checks(mode: str, data: dict[str, Any], mode_record: dict[str,
     checks["record_count"] = len(data.get("records") or []) == 32
     checks["ineligible_count"] = len(data.get("ineligible") or []) == 2
     checks["input_immutable"] = data.get("input_immutable") is True
-    checks["no_device_fallback"] = data.get("device_fallback") in (False, 0)
+    # masked_cpu intentionally exercises auto -> CPU: the *device* fallback is
+    # expected there (CUDA is hidden), while model fallback must stay 0.  The
+    # other two modes must resolve without any device fallback.
+    expected_device_fallback = mode == "masked_cpu"
+    checks["device_fallback_semantics"] = (
+        (data.get("device_fallback") is True) == expected_device_fallback)
+    if expected_device_fallback:
+        reason = str((data.get("runtime") or {}).get("device_reason") or "")
+        checks["masked_device_reason"] = bool(reason)
     checks["live_input_not_used"] = data.get("live_input_used") is False
     checks["not_displayed"] = data.get("recommendation_displayed") is False
     checks["worker_executable_matches"] = (

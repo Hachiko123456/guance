@@ -137,7 +137,8 @@ py -3.12 -B scripts\run_final_local_gpu_acceptance.py cleanup --package <extract
 `fixed-progress-<mode>.jsonl`（只含序号、耗时、状态，不含决策 payload）；`merge-fixed`
 再严格校验三份记录来自同一 EXE/模型/输入身份，且各自满足 34 provider-eligible、
 32 strict-eligible、32 推荐、2 strict-ineligible 拒绝、errors=0、model fallback=0、
-输入不变后才合并为 `fixed-matrix.json`。`negatives` 验证缺失/篡改模型（篡改 descriptor
+输入不变后才合并为 `fixed-matrix.json`。`masked_cpu` 的 device fallback 必须为 true
+（auto→CPU 的预期设备回退）且带原因，另外两种模式不得发生 device fallback。`negatives` 验证缺失/篡改模型（篡改 descriptor
 的期望错误集显式为 `ARTIFACT_SIZE_MISMATCH`）、错误 wire 契约，以及切换后旧请求
 以合法且与 payload 一致的 envelope 被明确拒绝（`REQUEST_KIND_UNSUPPORTED`，附切换前
 正控制和不换模型的复核）。

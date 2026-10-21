@@ -415,3 +415,73 @@ def test_default_profile_rejects_present_marvel_runtime(tmp_path):
     (root / "data" / "profiles").mkdir(parents=True)
     with pytest.raises(RuntimeError):
         module._validate_package(root, package, capture_runtime=False)
+
+
+def _fixed_summary(exe_sha: str, *, expect_device: str, device_fallback: bool) -> dict:
+    return {
+        "schema": "guance-gpu-first-fixed-input-v1",
+        "provenance": "offline_confirmed_decision",
+        "live_input_used": False, "recommendation_displayed": False,
+        "requested_device": "cpu" if expect_device == "cpu" else "auto",
+        "expect_device": expect_device,
+        "worker_executable": "Guance.exe", "worker_executable_sha256": exe_sha,
+        "package_resolved_assets": True,
+        "runtime": {"actual_device": expect_device, "device_fallback": device_fallback,
+                    "device_reason": "cuda_unavailable" if device_fallback else None,
+                    "model_version": "MARVEL-V2-v1.3-iter002000", "model_sha256": "b" * 64},
+        "load_seconds": 8.0, "provider_eligible_count": 34, "strict_eligible_count": 32,
+        "strict_ineligible_count": 2, "recommendation_count": 32,
+        "recommendation_error_count": 0, "model_fallback_count": 0,
+        "device_fallback": device_fallback, "input_immutable": True,
+        "gate": {"checkpoint_sha256": "b" * 64, "deployment_sha256": "c" * 64},
+        "records": [{"index": index, "decision_identity": f"id-{index}", "kind": "pass"}
+                    for index in range(32)],
+        "ineligible": [{"phase": "x", "code": "y", "reason": "z"}] * 2,
+    }
+
+
+def test_merge_fixed_accepts_masked_device_fallback_and_rejects_it_elsewhere(tmp_path):
+    """masked_cpu is an expected auto->CPU device fallback; the other modes are not.
+
+    The product keeps model_fallback_count=0 in every mode.  An over-strict harness
+    that demanded device_fallback=false everywhere failed a correct masked run.
+    """
+    import argparse
+    import hashlib
+    import sys
+
+    sys.path.insert(0, str(ROOT))
+    import scripts.run_final_local_gpu_acceptance as acc
+
+    package = tmp_path / "Guance"
+    package.mkdir()
+    (package / "Guance.exe").write_bytes(b"exe")
+    exe_sha = hashlib.sha256(b"exe").hexdigest()
+    out = tmp_path / "evidence"
+    out.mkdir()
+
+    def build(masked_fallback: bool) -> None:
+        for mode, spec in acc.FIXED_MODES.items():
+            summary = _fixed_summary(exe_sha, expect_device=spec["expect"],
+                                     device_fallback=masked_fallback if mode == "masked_cpu"
+                                     else False)
+            (out / spec["output"]).write_text(json.dumps(summary), encoding="utf-8")
+            (out / f"fixed-mode-{mode}.json").write_text(json.dumps({
+                "status": "passed", "exit": 0, "exe_sha256": exe_sha, "elapsed_s": 1.0,
+                "progress": "p", "progress_summary": {"last_success_index": 32},
+            }), encoding="utf-8")
+
+    args = argparse.Namespace(package=package, out=out)
+    build(masked_fallback=True)
+    assert acc.cmd_merge_fixed(args) == 0
+    report = json.loads((out / "fixed-matrix.json").read_text(encoding="utf-8"))
+    assert report["status"] == "passed", report["failed_checks"]
+
+    # The same masked fallback in gpu_auto must fail the expectation.
+    build(masked_fallback=True)
+    summary = _fixed_summary(exe_sha, expect_device="cuda:0", device_fallback=True)
+    (out / acc.FIXED_MODES["gpu_auto"]["output"]).write_text(
+        json.dumps(summary), encoding="utf-8")
+    assert acc.cmd_merge_fixed(args) == 2
+    report = json.loads((out / "fixed-matrix.json").read_text(encoding="utf-8"))
+    assert "gpu_auto.device_fallback_semantics" in report["failed_checks"]
