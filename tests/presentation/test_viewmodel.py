@@ -394,6 +394,37 @@ def test_public_play_display_order_is_ascending_without_changing_hand_order(qapp
         assert vm._table == original
 
 
+@pytest.mark.parametrize(("wire_kind", "model_kind", "cards", "ranks"), [
+    (4, "straight", [0x23, 0x15, 0x31, 0x14, 0x12], ["A", "2", "3", "4", "5"]),
+    (4, "straight", [0x31, 0x1D, 0x2C, 0x3B, 0x1A], ["10", "J", "Q", "K", "A"]),
+    (6, "serial_pair", [0x1C, 0x2C, 0x3B, 0x1D, 0x2D, 0x1B], ["J", "J", "Q", "Q", "K", "K"]),
+    (7, "serial_triple", [0x1D, 0x31, 0x2D, 0x21, 0x3D, 0x11], ["K", "K", "K", "A", "A", "A"]),
+    (9, "sflush", [0x13, 0x15, 0x11, 0x14, 0x12], ["A", "2", "3", "4", "5"]),
+    (5, "full", [0x1B, 0x17, 0x2B, 0x37, 0x3B], ["J", "J", "J", "7", "7"]),
+    (4, "straight", [0x23, 0x15, 0x31, 0x27, 0x12], ["A", "2", "3", "7", "5"]),
+])
+def test_combination_order_is_shared_by_advice_table_and_observation(
+        qapp, wire_kind, model_kind, cards, ranks):
+    vm = GuanceViewModel()
+    identity = {"session_id": "s", "game_id": "sequence-order", "state_version": 1}
+    position = {
+        **identity, "phase": "ready", "level": 7, "my_seat": 0, "current_seat": 0,
+        "seat_confirmed": True, "hand": [0x18], "remaining": [1, 20, 20, 20],
+        "history": [{"player": 0, "kind": "play", "combo_type": wire_kind, "cards": cards, "trick": 1}],
+    }
+    original = deepcopy(position)
+    vm.apply_observation(position)
+    assert [card["rank"] for card in vm.recentPlays[0]["cards"]] == ranks
+    vm.apply_table_state(position)
+    assert [card["rank"] for card in vm.tableSeatRows[0]["cards"]] == ranks
+    vm.apply_advice({**identity, "status": "ready",
+                     "candidates": [{"kind": model_kind, "cards": cards}]})
+    shown = vm.adviceCandidates[0]["cards"]
+    assert [card["rank"] for card in shown] == ranks
+    assert sorted(public_play_display_order(cards, 7, model_kind)) == sorted(cards)
+    assert position == original
+
+
 @pytest.mark.parametrize("my_seat", range(4))
 def test_relative_labels_keep_seat_semantics(my_seat: int) -> None:
     assert [seat_name((my_seat + offset) % 4, my_seat) for offset in (0, 3, 2, 1)] == ["自己", "右家", "对家", "左家"]

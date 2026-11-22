@@ -73,6 +73,51 @@ def test_public_action_is_whitelisted_and_order_checked(view):
         CanonicalPublicGameView.from_dict(data)
 
 
+@pytest.mark.parametrize(("observed_type", "cards", "model_type"), [
+    (1, (0x19,), 1),
+    (2, (0x19, 0x29), 2),
+    (3, (0x19, 0x29, 0x39), 3),
+    (4, (0x16, 0x27, 0x18, 0x19, 0x1A), 4),
+    (5, (0x19, 0x29, 0x39, 0x16, 0x26), 5),
+    (6, (0x16, 0x26, 0x17, 0x27, 0x18, 0x28), 6),
+    (7, (0x16, 0x26, 0x36, 0x17, 0x27, 0x37), 7),
+    (8, (0x19, 0x29, 0x39, 0x49), 8),
+    (8, (0x19, 0x29, 0x39, 0x49, 0x119), 8),
+    (9, (0x16, 0x17, 0x18, 0x19, 0x1A), 9),
+    (10, (0x19, 0x29, 0x39, 0x49, 0x119, 0x25), 8),
+    (10, (0x19, 0x29, 0x39, 0x49, 0x119, 0x129, 0x139, 0x149, 0x25, 0x125), 8),
+    (10, (0x0E, 0x0F, 0x10E, 0x10F), 10),  # stored canonical rocket
+    (11, (0x10F, 0x0E, 0x10E, 0x0F), 10),
+])
+def test_observation_projects_wire_combos_for_follow_and_later_history(
+        observation, observed_type, cards, model_type):
+    observed = PublicAction(1, 1, "play", cards, observed_type, 0, 0)
+    follow = replace(observation, level=5, history=(observed,), lead_action=observed, free_lead=False)
+    view = CanonicalPublicGameView.from_observation(follow)
+    assert view.lead_action == view.public_history[0]
+    assert view.lead_action.combo_type == model_type
+    assert CanonicalPublicGameView.from_dict(view.to_dict()) == view
+
+    passed = PublicAction(2, 0, "pass", (), None, 1, 0)
+    later = replace(follow, history=(observed, passed), lead_action=None, free_lead=True, trick=1)
+    view = CanonicalPublicGameView.from_observation(later)
+    assert view.public_history == (replace(observed, combo_type=model_type), passed)
+    assert follow.history[0].combo_type == observed_type
+
+
+@pytest.mark.parametrize(("combo_type", "cards"), [
+    (11, (0x0E, 0x0F, 0x10E, 0x19)),
+    (11, (0x0E, 0x0F, 0x10E)),
+    (10, (0x19, 0x29, 0x39, 0x49, 0x119, 0x2A)),
+    (12, (0x0E, 0x0F, 0x10E, 0x10F)),
+])
+def test_observation_rejects_conflicting_or_unknown_special_combo(observation, combo_type, cards):
+    action = PublicAction(1, 1, "play", cards, combo_type, 0, 0)
+    follow = replace(observation, history=(action,), lead_action=action, free_lead=False)
+    with pytest.raises(ModelContractError):
+        CanonicalPublicGameView.from_observation(follow)
+
+
 @pytest.mark.parametrize("score_kind,score", [("fabledan_q", -200.0), ("guandan_token_score", 0.9)])
 def test_advice_additions_preserve_raw_scale_claim_and_safe_metadata(view, score_kind, score):
     candidate = AdviceCandidate((0x11,), "play", "single", score, (1,),

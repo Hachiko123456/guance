@@ -27,10 +27,11 @@ def wait_until(predicate, timeout=4):
     assert predicate(), "Timed out waiting for model test event"
 
 
-def reply(item):
+def reply(item, *, provider="test", cards=(0x11,)):
+    score_kind = "danks_score" if provider == "danks_v3" else "test_score"
     result = CanonicalAdviceResult(item["session_id"], item["game_id"], item["state_version"],
-        item["request_id"], provider="test", model_version="v1", score_kind="test_score",
-        candidates=(AdviceCandidate((0x11,), "play", "single", 0.5, score_kind="test_score"),))
+        item["request_id"], provider=provider, model_version="v1", score_kind=score_kind,
+        candidates=(AdviceCandidate(cards, "play", "single", 0.5, score_kind=score_kind),))
     return envelope("result", item, result=result.to_dict())
 
 
@@ -51,6 +52,103 @@ class ControlledClient(InferenceClient):
         if self._process is not None:
             self.terminations += 1
         self._process = None
+
+
+def test_danks_timeout_is_a_serializable_result_for_the_current_turn(tmp_path, view):
+    results, statuses = [], []
+    client = ControlledClient(tmp_path, results, statuses)
+    client._loaded_metadata = {
+        "provider": "danks_v3", "model_version": "v1", "score_kind": "danks_score",
+    }
+    try:
+        request_id = _submit(client, view, timeout_seconds=0.2)
+        wait_until(lambda: len(results) == 1)
+        failure = results[0].to_dict()
+        assert failure["request_id"] == request_id
+        assert failure["status"] == "unavailable" and failure["error_code"] == "MODEL_TIMEOUT"
+        assert failure["candidates"] == []
+        assert not any(status.get("model_status") == "timeout" for status in statuses)
+        following = replace(view, state_version=view.state_version + 1)
+        following_id = _submit(client, following)
+        wait_until(lambda: len(client.sent) == 2)
+        client._responses.put(reply(client.sent[-1], provider="danks_v3"))
+        wait_until(lambda: len(results) == 2)
+        assert results[-1].request_id == following_id and results[-1].status == "ready"
+    finally:
+        client.close()
+
+
+@pytest.mark.parametrize("code", [
+    "MODEL_OUTPUT_NOT_BEATING", "MODEL_OUTPUT_AMBIGUOUS", "MODEL_OUTPUT_INVALID",
+    "MODEL_INPUT_UNSUPPORTED", "MODEL_INFERENCE_FAILED", "MODEL_WORKER_EXITED",
+])
+def test_danks_failed_turn_does_not_disable_later_turns(tmp_path, view, code):
+    results, statuses = [], []
+    client = ControlledClient(tmp_path, results, statuses)
+    client._loaded_metadata = {
+        "provider": "danks_v3", "model_version": "v1", "score_kind": "danks_score",
+    }
+    try:
+        request_id = _submit(client, view)
+        wait_until(lambda: len(client.sent) == 1)
+        response = ({"type": "exited"} if code == "MODEL_WORKER_EXITED"
+                    else envelope("error", client.sent[0], fatal=False, error_code=code))
+        client._responses.put(response)
+        wait_until(lambda: len(results) == 1)
+        assert results[0].request_id == request_id
+        assert results[0].status == "unavailable" and not results[0].candidates
+        assert results[0].error_code == code
+
+        next_id = _submit(client, replace(view, state_version=view.state_version + 1))
+        wait_until(lambda: len(client.sent) == 2)
+        client._responses.put(reply(client.sent[-1], provider="danks_v3"))
+        wait_until(lambda: len(results) == 2)
+        assert results[1].request_id == next_id and results[1].status == "ready"
+        restarted = code == "MODEL_WORKER_EXITED"
+        assert client.launches == 1 + restarted and client.terminations == restarted
+        assert not any(status.get("model_status") == "error" for status in statuses)
+    finally:
+        client.close()
+
+
+@pytest.mark.parametrize(("fault", "expected"), [
+    ("old_turn_failure", None), ("foreign_provider", "RESPONSE_MISMATCH"),
+    ("reader_error", "PROTOCOL_INVALID"), ("fatal_error", "MODEL_OUTPUT_NOT_BEATING"),
+])
+def test_danks_distinguishes_stale_failure_from_fatal_ipc(tmp_path, view, fault, expected):
+    results, statuses = [], []
+    client = ControlledClient(tmp_path, results, statuses)
+    client._loaded_metadata = {
+        "provider": "danks_v3", "model_version": "v1", "score_kind": "danks_score",
+    }
+    try:
+        _submit(client, view, timeout_seconds=2)
+        wait_until(lambda: len(client.sent) == 1)
+        sent = client.sent[0]
+        if fault == "old_turn_failure":
+            next_id = _submit(client, replace(view, state_version=view.state_version + 1))
+            client._responses.put(envelope("error", sent, fatal=False,
+                                           error_code="MODEL_OUTPUT_NOT_BEATING"))
+            wait_until(lambda: len(client.sent) == 2)
+            client._responses.put(reply(client.sent[-1], provider="danks_v3"))
+            wait_until(lambda: len(results) == 1)
+            assert results[0].request_id == next_id
+            assert results[0].status == "ready"
+            assert not statuses
+        else:
+            response = {
+                "foreign_provider": reply(sent),
+                "reader_error": {"type": "reader_error"},
+                "fatal_error": envelope("error", sent, fatal=True,
+                                        error_code="MODEL_OUTPUT_NOT_BEATING"),
+            }[fault]
+            client._responses.put(response)
+            wait_until(lambda: bool(statuses))
+            assert statuses[-1].get("model_status") == "error"
+            assert statuses[-1].get("error_code") == expected
+            assert not results
+    finally:
+        client.close()
 
 
 def test_latest_only_queue_before_start_and_close_is_terminal(tmp_path, view, monkeypatch):

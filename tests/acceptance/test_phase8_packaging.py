@@ -2,6 +2,7 @@
 import ast
 import os
 from pathlib import Path
+import sys
 
 import pytest
 
@@ -11,6 +12,7 @@ from scripts.build_release import (
     _mode_work_directory,
     _validate_output_paths,
     _validate_packaging_inputs,
+    main,
 )
 
 
@@ -42,6 +44,14 @@ def test_no_capture_input_validation_never_requires_prepared_runtime(tmp_path: P
 
     with pytest.raises(RuntimeError, match="mitmproxy"):
         _validate_packaging_inputs(root, exclude_capture_runtime=False)
+
+
+def test_danks_capture_build_requires_verified_rules_input(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(sys, "argv", ["build_release.py", "--profile", "danks-cpu"])
+    with pytest.raises(SystemExit) as error:
+        main()
+    assert error.value.code == 2
+    assert "danks-cpu with capture requires --danks-rules-source" in capsys.readouterr().err
 
 
 def test_capture_build_modes_have_distinct_cache_and_explicit_environment(

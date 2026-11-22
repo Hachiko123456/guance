@@ -228,6 +228,18 @@ class ProxyPort(Protocol):
         """Apply local proxy settings and return the resulting settings."""
         ...
 
+    def pac_snapshot(self) -> ProxySnapshot:
+        """Read the active per-connection proxy options."""
+        ...
+
+    def set_pac(self, url: str, *, expected: ProxySnapshot) -> bool:
+        """Change the PAC URL only while the inspected settings still match."""
+        ...
+
+    def wpad_available(self) -> bool:
+        """Report an automatically discovered PAC."""
+        ...
+
     def restore(self, snapshot: ProxySnapshot, expected: ProxySnapshot | None = None) -> bool:
         """Restore only if ``expected`` still matches, when supplied."""
         ...

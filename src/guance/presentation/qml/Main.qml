@@ -9,16 +9,36 @@ ApplicationWindow {
     id: window
     objectName: "guanceWindow"
     visible: true
-    width: 1180
-    height: 760
-    minimumWidth: 960
-    minimumHeight: 620
+    width: 600
+    height: 720
+    minimumWidth: 360
+    minimumHeight: 260
     title: "掼策"
     color: Theme.canvas
     property bool mainCloseRequested: false
     property bool floatingCloseInProgress: false
 
     Binding { target: Theme; property: "dark"; value: viewModel.themeMode === "dark" || (viewModel.themeMode === "system" && Qt.styleHints.colorScheme === Qt.Dark) }
+
+    function placeSplitLayout() {
+        if (typeof viewModel.screen_work_area !== "function")
+            return
+        const area = viewModel.screen_work_area(window)
+        const wide = viewModel.splitLayout === "stacked"
+        if (!area || area.width < 1 || area.height < 1)
+            return
+        const frameAllowance = 36
+        const contentHeight = Math.max(1, area.height - frameAllowance)
+        window.minimumWidth = Math.min(360, area.width)
+        window.minimumHeight = Math.min(260, contentHeight)
+        window.width = wide ? Math.max(1, area.width - 8) : Math.min(area.width, Math.max(440, Math.floor(area.width * 0.48)))
+        const sidebarHeight = Math.max(510, Math.round(window.width * 0.9))
+        window.height = Math.min(contentHeight, wide ? Math.max(295, Math.floor(contentHeight * 0.51)) : sidebarHeight)
+        window.x = wide ? area.x + 4 : area.x + area.width - window.width
+        window.y = wide ? area.y + area.height - window.height - frameAllowance : area.y
+    }
+
+    Component.onCompleted: placeSplitLayout()
 
     function certificateIsTrusted() {
         var state = String(viewModel.certificateState || "").toLowerCase()
@@ -77,31 +97,42 @@ ApplicationWindow {
     }
 
     header: Rectangle {
-        height: 64
+        id: mainHeader
+        height: 38
         color: Theme.panel
         border.color: Theme.line
         RowLayout {
             anchors.fill: parent
-            anchors.leftMargin: 24
-            anchors.rightMargin: 20
-            spacing: 18
-            Text { text: "掼策"; color: Theme.ink; font.family: Theme.family; font.pixelSize: 21; font.weight: Font.DemiBold }
-            Text { text: "本地牌局智能助手"; color: Theme.muted; font.family: Theme.family; font.pixelSize: 12; Layout.fillWidth: true; elide: Text.ElideRight }
-            Badge { text: viewModel.modelState === "loaded" || viewModel.modelState === "ready" ? "模型就绪" : "模型待准备"; tone: viewModel.modelState === "loaded" || viewModel.modelState === "ready" ? "success" : "neutral" }
-            ActionButton { objectName: "navAssistantButton"; text: "助手"; subtle: viewModel.page !== "assistant"; onClicked: viewModel.navigate("assistant") }
-            ActionButton { objectName: "navSettingsButton"; text: "设置"; subtle: viewModel.page !== "settings"; onClicked: viewModel.navigate("settings") }
-            ActionButton { objectName: "navDiagnosticsButton"; text: "诊断"; subtle: viewModel.page !== "diagnostics"; onClicked: viewModel.navigate("diagnostics") }
+            anchors.leftMargin: 12
+            anchors.rightMargin: 9
+            spacing: 5
+            Text { text: "掼策"; color: Theme.ink; font.family: Theme.family; font.pixelSize: 16; font.weight: Font.DemiBold; Layout.fillWidth: true }
+            Badge {
+                readonly property bool ready: viewModel.modelState === "loaded" || viewModel.modelState === "ready"
+                readonly property bool failed: ["error", "timeout", "unavailable"].includes(viewModel.modelState)
+                text: ready ? "模型就绪" : failed ? "模型不可用" : viewModel.modelState === "loading" ? "正在加载" : "模型待准备"
+                tone: ready ? "success" : failed ? "danger" : "neutral"
+            }
+            ActionButton { objectName: "navAssistantButton"; text: "助手"; implicitHeight: 28; implicitWidth: 54; subtle: viewModel.page !== "assistant"; onClicked: viewModel.navigate("assistant") }
+            ActionButton { objectName: "navSettingsButton"; text: "设置"; implicitHeight: 28; implicitWidth: 54; subtle: viewModel.page !== "settings"; onClicked: viewModel.navigate("settings") }
+            ActionButton { objectName: "navDiagnosticsButton"; text: "诊断"; implicitHeight: 28; implicitWidth: 54; subtle: viewModel.page !== "diagnostics"; onClicked: viewModel.navigate("diagnostics") }
         }
     }
 
     StackLayout {
         anchors.fill: parent
-        anchors.topMargin: 64
-        anchors.leftMargin: 28
-        anchors.rightMargin: 28
-        anchors.bottomMargin: 24
+        anchors.margins: Math.max(5, Math.min(18, Math.floor(width / 55)))
+        anchors.topMargin: 3
+        anchors.bottomMargin: 4
         currentIndex: viewModel.page === "settings" ? 1 : viewModel.page === "diagnostics" ? 2 : 0
-        AssistantPage { onStartClicked: window.startAssistant(); onFloatingRequested: window.showFloatingWindow() }
+        AssistantPage {
+            onStartClicked: window.startAssistant()
+            onFloatingRequested: window.showFloatingWindow()
+            onSplitRequested: function(layout) {
+                viewModel.set_split_layout(layout)
+                window.placeSplitLayout()
+            }
+        }
         SettingsPage {}
         DiagnosticsPage {}
     }

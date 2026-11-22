@@ -4,10 +4,15 @@ import base64
 import hashlib
 import io
 import json
+import socket
 import subprocess
 import threading
+import time
+from dataclasses import replace
+from http.client import HTTPConnection
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -17,6 +22,7 @@ from guance.contracts import SourceFrame
 from guance.infrastructure.capture.command import build_mitm_command
 from guance.infrastructure.capture import addon as capture_addon
 from guance.infrastructure.capture.diagnostics import BoundedDiagnostics, redact_text
+from guance.infrastructure.capture.proxy_pac import build_scoped_routing
 from guance.infrastructure.capture.supervisor import SubprocessCaptureSupervisor
 from guance.infrastructure.windows import certificate as certificate_module
 from guance.infrastructure.windows.certificate import WindowsCertificateManager
@@ -183,6 +189,117 @@ def test_runtime_does_not_switch_proxy_when_listener_is_not_ready(tmp_path: Path
     assert result["error_code"] == "HELPER_NOT_READY"
     assert proxy.writes == 0
     assert "capture.stop" in events
+
+
+def _scoped_service(tmp_path, proxy, capture, on_status=None):
+    return RuntimeService(
+        paths(tmp_path), capture=capture, proxy=proxy, on_status=on_status,
+        options=RuntimeOptions(scoped_proxy=True, allowed_hosts=("game.example",),
+                               require_certificate=False),
+        certificate=FakeCertificate(),
+    )
+
+
+@pytest.mark.parametrize("original", [
+    ProxySnapshot(enabled=False, auto_detect=True),
+    ProxySnapshot(enabled=True, server="127.0.0.1:7897", bypass="<local>;*.corp.example"),
+])
+def test_scoped_capture_only_installs_temporary_pac(tmp_path, original):
+    class ScopedCapture(FakeCapture):
+        def start(self, config, *args):
+            self.config = config
+            super().start(config, *args)
+
+    proxy = InMemoryProxyBackend(original)
+    capture = ScopedCapture([])
+    service = _scoped_service(tmp_path, proxy, capture)
+    try:
+        assert service.start()["ok"]
+        assert replace(proxy.current, auto_config_url="") == original
+        assert bool(capture.config.upstream) == original.enabled
+        url = urlsplit(proxy.current.auto_config_url)
+        assert url.hostname == "127.0.0.1"
+        http = HTTPConnection(url.hostname, url.port, timeout=2)
+        try:
+            http.request("GET", url.path)
+            response = http.getresponse()
+            assert response.status == 200
+            payload = response.read()
+            reference = build_scoped_routing(original, ("game.example",), "127.0.0.1", 18080)
+            assert payload == reference.script
+        finally:
+            http.close()
+        assert service.stop()["ok"]
+        assert proxy.current == original
+        assert not capture.running
+        with pytest.raises(OSError):
+            with socket.create_connection((url.hostname, url.port), 0.2):
+                pytest.fail("PAC listener is still listening")
+        assert not (tmp_path / "config" / "proxy-lease.json").exists()
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("setting", ["pac", "wpad", "unsupported"])
+def test_scoped_capture_preserves_unsupported_network_settings(tmp_path, setting):
+    class DiscoveredWpad(InMemoryProxyBackend):
+        def wpad_available(self):
+            return True
+
+    if setting == "pac":
+        original = ProxySnapshot(enabled=False, auto_config_url="https://corp.example/proxy.pac")
+    elif setting == "wpad":
+        original = ProxySnapshot(enabled=False, auto_detect=True)
+    else:
+        original = ProxySnapshot(enabled=True, server="socks=127.0.0.1:1090")
+    proxy = DiscoveredWpad(original)
+    capture = FakeCapture([])
+    service = _scoped_service(tmp_path, proxy, capture)
+    try:
+        assert service.start()["error_code"] == "PROXY_ROUTING_UNSUPPORTED"
+        assert proxy.current == original and proxy.writes == 0
+        assert not capture.events
+        assert not (tmp_path / "config" / "proxy-lease.json").exists()
+    finally:
+        service.close()
+
+
+def test_scoped_capture_removes_its_pac_when_another_app_changes_manual_proxy(tmp_path):
+    proxy = InMemoryProxyBackend(ProxySnapshot(enabled=True, server="127.0.0.1:7897"))
+    statuses = []
+    capture = FakeCapture([])
+    service = _scoped_service(tmp_path, proxy, capture, statuses.append)
+    try:
+        assert service.start()["ok"]
+        external = replace(proxy.current, server="127.0.0.1:8997", bypass="new.example")
+        proxy.current = external
+        deadline = time.monotonic() + 4
+        while not any(status["state"] == "network_settings_changed" for status in statuses):
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+        assert proxy.current == replace(external, auto_config_url="")
+        assert not capture.running
+        assert not (tmp_path / "config" / "proxy-lease.json").exists()
+    finally:
+        service.close()
+
+
+def test_scoped_stale_recovery_only_clears_owned_pac(tmp_path, monkeypatch):
+    original = ProxySnapshot(enabled=True, server="127.0.0.1:7897")
+    old_pac = "http://127.0.0.1:49152/guance-stale.pac"
+    applied = replace(original, auto_config_url=old_pac)
+    store = ProxyLeaseStore(paths(tmp_path).config_dir / "proxy-lease.json")
+    store.save(ProxyLease(original, applied, 999999, "127.0.0.1", 18080, state="active"))
+    monkeypatch.setattr("guance.application.runtime.service._pid_is_alive", lambda pid: False)
+    external = replace(applied, server="127.0.0.1:9998")
+    proxy = InMemoryProxyBackend(external)
+    service = _scoped_service(tmp_path, proxy, FakeCapture([]))
+    try:
+        assert service.recover_stale_proxy()["ok"]
+        assert proxy.current == replace(external, auto_config_url="")
+        assert not store.path.exists()
+    finally:
+        service.close()
 
 
 def test_runtime_paths_and_capture_confdir_share_mitmproxy_directory(tmp_path: Path) -> None:

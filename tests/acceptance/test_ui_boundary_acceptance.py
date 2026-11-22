@@ -13,6 +13,7 @@ from typing import Any
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
+from PySide6.QtQuick import QQuickItem
 from PySide6.QtWidgets import QApplication
 
 from guance.presentation.app import create_ui
@@ -122,17 +123,24 @@ def test_ui_008_floating_close_syncs_viewmodel(qapp: QApplication) -> None:
     root.hide()
 
 
-def test_ui_009_candidate_toggle_is_wired_and_data_is_unchanged() -> None:
+def test_ui_009_all_candidates_are_displayed_and_data_is_unchanged(qapp) -> None:
     vm = GuanceViewModel()
     vm.enable_demo()
     before = list(vm.adviceCandidates)
     assert len(before) >= 2
     vm.apply_status({"phase": "ready"})
     assert vm.adviceCandidates == before
-    qml = Path("src/guance/presentation/qml/AssistantPage.qml").read_text(encoding="utf-8")
-    assert 'text: checked ? "收起其他候选' in qml
-    assert "checkable: true" in qml
-    assert "visible: candidatesToggle.checked" in qml
+    engine = create_ui(qapp, vm)
+    root = engine.rootObjects()[0]
+    try:
+        qapp.processEvents()
+        grid = root.findChild(QQuickItem, "visibleAdviceCandidates")
+        candidates = [item for item in grid.childItems() if item.objectName().startswith("adviceCandidate-")]
+        assert len(candidates) == len(before)
+        assert all(item.isVisible() for item in candidates)
+        assert vm.adviceCandidates == before
+    finally:
+        root.hide()
 
 
 def test_ui_010_model_import_emits_local_path() -> None:

@@ -11,6 +11,13 @@ import subprocess
 import sys
 import time
 
+# Keep the builder and the frozen runtime on the same bundle and rules identities.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+from guance.infrastructure.model.marvel_v2.rules_oracle import verified_rules_files
+from guance.infrastructure.model.package_assets import (
+    DANKS_BUNDLE_DIR_NAME, DANKS_RULES_DIR_NAME, DANKS_RUNTIME_DIR_NAME,
+)
+
 
 def _tree_size(path: Path) -> int:
     if not path.exists():
@@ -48,6 +55,7 @@ def _validate_output_paths(root: Path, dist: Path, work: Path, *, custom: bool) 
 CAPTURE_RUNTIME_ENV = "GUANCE_EXPERIMENTAL_PACKAGE_NO_CAPTURE_RUNTIME"
 PROFILE_DEFAULT = "default"
 PROFILE_MARVEL_GPU = "marvel-gpu"
+PROFILE_DANKS_CPU = "danks-cpu"
 MARVEL_SITE_ENV = "GUANCE_MARVEL_SITE_PACKAGES"
 MARVEL_SOURCE_ENV = "GUANCE_MARVEL_SOURCE"
 MARVEL_CHECKPOINT_ENV = "GUANCE_MARVEL_CHECKPOINT"
@@ -146,6 +154,76 @@ def _require_same_inventory(source: Path, packaged: Path, *, label: str) -> None
         raise RuntimeError("; ".join(details))
 
 
+_BUNDLE_PROVIDER_RUNTIMES = {
+    "fabledan": ("numpy", None),
+    "danks_v3": ("torch", 2),
+}
+
+
+def _validate_bundle_directory(bundle: Path, *, legacy: bool) -> list[Path]:
+    """Strictly validate one bundle directory; return its allowed file set.
+
+    ``legacy=True`` keeps the historical top-level FableDan/numpy-only
+    contract; the catalog layout additionally accepts DanKS V3 torch bundles.
+    """
+    manifest_path = bundle / "manifest.json"
+    if not manifest_path.is_file():
+        raise RuntimeError(f"model bundle manifest is missing: {manifest_path}")
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        artifact = manifest["artifact"]
+        provider = manifest.get("provider")
+        expected_runtime, expected_schema = _BUNDLE_PROVIDER_RUNTIMES.get(provider, (None, None))
+        if (expected_runtime is None or manifest.get("runtime") != expected_runtime
+                or not isinstance(artifact, str)):
+            raise ValueError(f"only {sorted(_BUNDLE_PROVIDER_RUNTIMES)} bundles are allowed here")
+        if legacy and provider != "fabledan":
+            raise ValueError("only FableDan/numpy bundles are allowed in the default package")
+        if expected_schema is not None and manifest.get("schema_version") != expected_schema:
+            raise ValueError(f"{provider} bundle must declare schema_version={expected_schema}")
+        relative = Path(*PurePosixPath(artifact).parts)
+        if relative.is_absolute() or any(part in {"", ".", ".."} for part in relative.parts):
+            raise ValueError("invalid artifact path")
+        artifact_path = (bundle / relative).resolve()
+        if not artifact_path.is_relative_to(bundle.resolve()) or not artifact_path.is_file():
+            raise ValueError("artifact is missing or escapes bundle")
+        digest = _sha256(artifact_path)
+        if manifest.get("artifact_sha256") != digest:
+            raise ValueError("artifact hash does not match manifest")
+    except (OSError, UnicodeError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"invalid default model bundle {manifest_path}: {exc}") from None
+    allowed = {manifest_path.resolve(), artifact_path}
+    sums = bundle / "SHA256SUMS"
+    if sums.exists():
+        if not sums.is_file():
+            raise RuntimeError(f"invalid model checksum file: {sums}")
+        seen: set[str] = set()
+        for line in sums.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            parts = line.split()
+            if len(parts) != 2 or len(parts[0]) != 64 or any(c not in "0123456789abcdef" for c in parts[0]):
+                raise RuntimeError(f"invalid model checksum entry: {sums}")
+            checksum_path = PurePosixPath(parts[1].lstrip("*"))
+            if checksum_path.is_absolute() or any(part in {"", ".", ".."} for part in checksum_path.parts):
+                raise RuntimeError(f"invalid model checksum path: {sums}")
+            key = checksum_path.as_posix()
+            if key in seen:
+                raise RuntimeError(f"duplicate model checksum entry: {sums}")
+            seen.add(key)
+            target = (bundle / Path(*checksum_path.parts)).resolve()
+            if (not target.is_relative_to(bundle.resolve()) or not target.is_file()
+                    or _sha256(target) != parts[0]):
+                raise RuntimeError(f"model checksum mismatch: {sums}")
+        if PurePosixPath(artifact).as_posix() not in seen or manifest.get("artifact_sha256") != digest:
+            raise RuntimeError(f"model checksum does not cover artifact: {sums}")
+        allowed.add(sums.resolve())
+    extras = [path for path in bundle.rglob("*") if path.is_file() and path.resolve() not in allowed]
+    if extras:
+        raise RuntimeError(f"unexpected files in model bundle: {[str(path) for path in extras[:4]]}")
+    return sorted(allowed)
+
+
 def _model_bundle_files(root: Path) -> list[tuple[Path, Path]]:
     """Return explicit source/package file pairs for approved default bundles."""
     source_root = root / "data" / "models"
@@ -153,59 +231,17 @@ def _model_bundle_files(root: Path) -> list[tuple[Path, Path]]:
         return []
     pairs: list[tuple[Path, Path]] = []
     for bundle in sorted(path for path in source_root.iterdir() if path.is_dir()):
-        manifest_path = bundle / "manifest.json"
-        if not manifest_path.is_file():
-            raise RuntimeError(f"model bundle manifest is missing: {manifest_path}")
-        try:
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            artifact = manifest["artifact"]
-            if (manifest.get("provider") != "fabledan" or manifest.get("runtime") != "numpy"
-                    or not isinstance(artifact, str)):
-                raise ValueError("only FableDan/numpy bundles are allowed in the default package")
-            relative = Path(*PurePosixPath(artifact).parts)
-            if relative.is_absolute() or any(part in {"", ".", ".."} for part in relative.parts):
-                raise ValueError("invalid artifact path")
-            artifact_path = (bundle / relative).resolve()
-            if not artifact_path.is_relative_to(bundle.resolve()) or not artifact_path.is_file():
-                raise ValueError("artifact is missing or escapes bundle")
-            digest = _sha256(artifact_path)
-            if manifest.get("artifact_sha256") != digest:
-                raise ValueError("artifact hash does not match manifest")
-        except (OSError, UnicodeError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
-            raise RuntimeError(f"invalid default model bundle {manifest_path}: {exc}") from None
-        allowed = {manifest_path.resolve(), artifact_path}
-        sums = bundle / "SHA256SUMS"
-        if sums.exists():
-            if not sums.is_file():
-                raise RuntimeError(f"invalid model checksum file: {sums}")
-            seen: set[str] = set()
-            for line in sums.read_text(encoding="utf-8").splitlines():
-                if not line.strip():
-                    continue
-                parts = line.split()
-                if len(parts) != 2 or len(parts[0]) != 64 or any(c not in "0123456789abcdef" for c in parts[0]):
-                    raise RuntimeError(f"invalid model checksum entry: {sums}")
-                checksum_path = PurePosixPath(parts[1].lstrip("*"))
-                if checksum_path.is_absolute() or any(part in {"", ".", ".."} for part in checksum_path.parts):
-                    raise RuntimeError(f"invalid model checksum path: {sums}")
-                key = checksum_path.as_posix()
-                if key in seen:
-                    raise RuntimeError(f"duplicate model checksum entry: {sums}")
-                seen.add(key)
-                target = (bundle / Path(*checksum_path.parts)).resolve()
-                if (not target.is_relative_to(bundle.resolve()) or not target.is_file()
-                        or _sha256(target) != parts[0]):
-                    raise RuntimeError(f"model checksum mismatch: {sums}")
-            if PurePosixPath(artifact).as_posix() not in seen or manifest.get("artifact_sha256") != digest:
-                raise RuntimeError(f"model checksum does not cover artifact: {sums}")
-            allowed.add(sums.resolve())
-        extras = [path for path in bundle.rglob("*") if path.is_file() and path.resolve() not in allowed]
-        if extras:
-            raise RuntimeError(f"unexpected files in model bundle: {[str(path) for path in extras[:4]]}")
-        destination = Path("data/models") / bundle.name
-        pairs.extend((path, destination / path.name if path.parent == bundle else
-                      destination.joinpath(*path.relative_to(bundle).parts))
-                     for path in sorted(allowed) if path.is_file())
+        if bundle.name == "catalog":
+            continue  # strict catalog layout, scanned below
+        for path in _validate_bundle_directory(bundle, legacy=True):
+            destination = Path("data/models") / bundle.name
+            pairs.append((path, destination.joinpath(*path.relative_to(bundle).parts)))
+    catalog_root = source_root / "catalog"
+    if catalog_root.is_dir():
+        for bundle in sorted(path for path in catalog_root.iterdir() if path.is_dir()):
+            for path in _validate_bundle_directory(bundle, legacy=False):
+                destination = Path("data/models/catalog") / bundle.name
+                pairs.append((path, destination.joinpath(*path.relative_to(bundle).parts)))
     return pairs
 
 
@@ -375,8 +411,103 @@ def _validate_marvel_package(package: Path, inputs: dict[str, Path]) -> None:
         raise RuntimeError("marvel-gpu package validation failed; static torch libraries are present")
 
 
+def _danks_inputs(rules_source: Path | None) -> dict[str, Path]:
+    """Resolve the local CPU Torch runtime allowlist for the danks-cpu profile.
+
+    The DanKS V3 loader is strictly CPU (fail-closed device policy), so the
+    current interpreter's own site-packages supply the trusted runtime; no
+    CUDA payload and no MARVEL assets are required.
+    """
+    site_packages = Path(sys.executable).resolve().parent / "Lib" / "site-packages"
+    if not (site_packages / "torch" / "__init__.py").is_file():
+        raise RuntimeError(
+            f"danks-cpu profile requires torch in the current interpreter: {site_packages}")
+    if not list((site_packages / "torch").glob("_C*.pyd")):
+        raise RuntimeError("danks-cpu profile validation failed; torch._C extension is missing")
+    inputs = {"site_packages": site_packages}
+    if rules_source is not None:
+        rules_source = rules_source.resolve()
+        verified_rules_files(rules_source)
+        inputs["rules_source"] = rules_source
+    return inputs
+
+
+def _install_danks_runtime(package: Path, inputs: dict[str, Path]) -> dict[str, int]:
+    """Copy the explicit CPU Torch allowlist into the frozen package."""
+    internal = package / "_internal"
+    runtime_root = internal / DANKS_RUNTIME_DIR_NAME
+    site_target = runtime_root / "site-packages"
+    copied = 0
+    for package_name in _TORCH_RUNTIME_PACKAGES:
+        package_source = inputs["site_packages"] / package_name
+        if not (package_source / "__init__.py").is_file():
+            raise RuntimeError(
+                f"danks-cpu site-packages does not contain required runtime package: {package_name}")
+        package_target = site_target / package_name
+        for path in sorted(package_source.rglob("*")):
+            if not path.is_file():
+                continue
+            relative = path.relative_to(package_source)
+            if relative.parts and relative.parts[0] in _TORCH_SKIP_DIRS:
+                continue
+            if path.suffix.lower() in _TORCH_SKIP_SUFFIXES:
+                continue
+            _copy_file(path, package_target / relative)
+            copied += 1
+    typing_extensions = inputs["site_packages"] / "typing_extensions.py"
+    if typing_extensions.is_file():
+        _copy_file(typing_extensions, site_target / "typing_extensions.py")
+        copied += 1
+    rules_source = inputs.get("rules_source")
+    if rules_source is not None:
+        for relative in verified_rules_files(rules_source):
+            _copy_file(rules_source / relative, runtime_root / DANKS_RULES_DIR_NAME / relative)
+            copied += 1
+    return {"copied": copied}
+
+
+def _validate_danks_package(package: Path, inputs: dict[str, Path]) -> None:
+    internal = package / "_internal"
+    runtime_root = internal / DANKS_RUNTIME_DIR_NAME
+    torch_root = runtime_root / "site-packages" / "torch"
+    required = [
+        torch_root / "__init__.py",
+        runtime_root / "site-packages" / "torchgen" / "__init__.py",
+        runtime_root / "site-packages" / "sympy" / "__init__.py",
+        runtime_root / "site-packages" / "mpmath" / "__init__.py",
+    ]
+    missing = [str(path) for path in required if not path.exists()]
+    if missing:
+        raise RuntimeError(f"danks-cpu package validation failed; missing: {missing}")
+    if not any(torch_root.glob("_C*.pyd")):
+        raise RuntimeError("danks-cpu package validation failed; torch._C extension is missing")
+    bundle = internal / "data" / "models" / "catalog" / DANKS_BUNDLE_DIR_NAME
+    _validate_bundle_directory(bundle, legacy=False)
+    manifest = json.loads((bundle / "manifest.json").read_text(encoding="utf-8"))
+    if manifest.get("provider") != "danks_v3":
+        raise RuntimeError("danks-cpu package validation failed; default bundle must be DanKS V3")
+    if (internal / "marvel_runtime").exists():
+        raise RuntimeError("danks-cpu package validation failed; MARVEL runtime is present")
+    helper = internal / "runtime" / "mitmproxy"
+    if "rules_source" in inputs:
+        rules_root = runtime_root / DANKS_RULES_DIR_NAME
+        try:
+            verified = set(verified_rules_files(rules_root))
+        except ValueError as exc:
+            raise RuntimeError(f"packaged DanKS rules validation failed: {exc}") from exc
+        if set(_file_inventory(rules_root)) != {path.as_posix() for path in verified}:
+            raise RuntimeError("packaged DanKS rules contain unexpected files")
+    elif helper.exists():
+        raise RuntimeError("danks-cpu capture runtime requires verified rules")
+    if any(not path.is_relative_to(helper / "_internal") for path in package.rglob("python314.dll")):
+        raise RuntimeError("danks-cpu package validation failed; Python 3.14 payload is present")
+    if list((torch_root / "lib").glob("*.lib")):
+        raise RuntimeError("danks-cpu package validation failed; static torch libraries are present")
+
+
 def _validate_package(root: Path, package: Path | None = None, *, capture_runtime: bool = True,
-                      marvel_inputs: dict[str, Path] | None = None) -> None:
+                      marvel_inputs: dict[str, Path] | None = None,
+                      danks_inputs: dict[str, Path] | None = None) -> None:
     package = package if package is not None else root / "release" / "Guance"
     internal = package / "_internal"
     required = [
@@ -428,7 +559,9 @@ def _validate_package(root: Path, package: Path | None = None, *, capture_runtim
 
     expected_bundles = _model_bundle_files(root)
     actual_bundle_root = internal / "data" / "models"
-    actual_bundle_files = {path.relative_to(actual_bundle_root).as_posix(): path
+    # Expected destinations are relative to _internal (they carry the
+    # data/models prefix); compare against the same base.
+    actual_bundle_files = {path.relative_to(internal).as_posix(): path
                            for path in actual_bundle_root.rglob("*") if path.is_file()} if actual_bundle_root.is_dir() else {}
     expected_bundle_names = {destination.as_posix().replace("\\", "/"): source
                              for source, destination in expected_bundles}
@@ -460,6 +593,10 @@ def _validate_package(root: Path, package: Path | None = None, *, capture_runtim
         _validate_marvel_package(package, marvel_inputs)
     elif (internal / "marvel_runtime").exists():
         raise RuntimeError("package validation failed; MARVEL runtime is present in a non-GPU profile")
+    if danks_inputs is not None:
+        _validate_danks_package(package, danks_inputs)
+    elif (internal / DANKS_RUNTIME_DIR_NAME).exists():
+        raise RuntimeError("package validation failed; DanKS runtime is present in a non-danks profile")
 
 
 def main() -> int:
@@ -482,13 +619,21 @@ def main() -> int:
         help="build an evaluation-only package without the independently frozen capture helper",
     )
     parser.add_argument(
-        "--profile", choices=(PROFILE_DEFAULT, PROFILE_MARVEL_GPU), default=PROFILE_DEFAULT,
-        help="packaging profile; marvel-gpu adds the explicit local Torch/MARVEL allowlist",
+        "--profile", choices=(PROFILE_DEFAULT, PROFILE_MARVEL_GPU, PROFILE_DANKS_CPU),
+        default=PROFILE_DEFAULT,
+        help="packaging profile; marvel-gpu adds the explicit local Torch/MARVEL allowlist, "
+             "danks-cpu adds the local CPU Torch allowlist and the DanKS catalog bundle",
     )
+    parser.add_argument("--danks-rules-source", type=Path,
+                        help="verified GD-RULES source root for danks-cpu builds that include capture")
     args = parser.parse_args()
 
     root = Path(__file__).resolve().parents[1]
     marvel_inputs = None
+    danks_inputs = None
+    if args.danks_rules_source is not None and (args.profile != PROFILE_DANKS_CPU
+                                               or args.exclude_capture_runtime):
+        parser.error("--danks-rules-source is only used by danks-cpu with capture")
     if args.profile == PROFILE_MARVEL_GPU:
         if not args.exclude_capture_runtime:
             raise SystemExit("marvel-gpu profile requires --exclude-capture-runtime")
@@ -496,6 +641,13 @@ def main() -> int:
             marvel_inputs = _marvel_inputs()
         except (OSError, RuntimeError, ValueError, KeyError, json.JSONDecodeError) as exc:
             raise SystemExit(f"marvel-gpu asset validation failed: {exc}") from None
+    if args.profile == PROFILE_DANKS_CPU:
+        if not args.exclude_capture_runtime and args.danks_rules_source is None:
+            parser.error("danks-cpu with capture requires --danks-rules-source")
+        try:
+            danks_inputs = _danks_inputs(args.danks_rules_source)
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise SystemExit(f"danks-cpu asset validation failed: {exc}") from None
     dist = (args.dist_dir if args.dist_dir is not None else root / "release").resolve()
     work_root = (args.work_dir if args.work_dir is not None else root / "build" / "pyinstaller").resolve()
     work = _mode_work_directory(
@@ -563,9 +715,12 @@ def main() -> int:
         if marvel_inputs is not None:
             installed = _install_marvel_runtime(dist / "Guance", marvel_inputs)
             print(json.dumps({"marvel_runtime_installed": installed}, sort_keys=True))
+        if danks_inputs is not None:
+            installed = _install_danks_runtime(dist / "Guance", danks_inputs)
+            print(json.dumps({"danks_runtime_installed": installed}, sort_keys=True))
         _validate_package(
             root, dist / "Guance", capture_runtime=not args.exclude_capture_runtime,
-            marvel_inputs=marvel_inputs,
+            marvel_inputs=marvel_inputs, danks_inputs=danks_inputs,
         )
     except (OSError, RuntimeError) as exc:
         elapsed = time.perf_counter() - started

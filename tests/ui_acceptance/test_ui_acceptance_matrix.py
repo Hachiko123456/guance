@@ -138,25 +138,21 @@ def test_ui_008_floating_close_syncs_state_and_reopens(ui) -> None:
     assert floating.property("visible") is True
 
 
-def test_ui_009_candidate_toggle_preserves_candidates(ui) -> None:
+def test_ui_009_all_candidates_are_visible_without_an_extra_click(ui) -> None:
     app, _engine, root, vm, _controller = ui
     candidates = [
         {"kind": "对子", "cards": [], "pass": False},
         {"kind": "单张", "cards": [], "pass": False},
         {"kind": "过牌", "cards": [], "pass": True},
     ]
+    vm.enable_demo()
     vm.set_candidates(candidates)
     app.processEvents()
-    toggle = control_with_text(root, "查看其他候选  ⌄")
-    before = list(vm.adviceCandidates)
-    click(toggle)
-    app.processEvents()
-    assert toggle.property("checked") is True
-    assert vm.adviceCandidates == before
-    click(toggle)
-    app.processEvents()
-    assert toggle.property("checked") is False
-    assert vm.adviceCandidates == before
+    grid = child(root, "visibleAdviceCandidates")
+    rows = [item for item in grid.childItems() if item.objectName().startswith("adviceCandidate-")]
+    assert len(rows) == len(candidates)
+    assert all(item.isVisible() for item in rows)
+    assert vm.adviceCandidates == candidates
 
 
 def test_ui_010_model_dialog_cancel_and_selection_path(ui, tmp_path: Path) -> None:

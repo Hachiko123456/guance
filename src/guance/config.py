@@ -55,10 +55,10 @@ def default_model_path(paths: dict[str, Path]) -> Path:
 
 
 def load_preferences(paths: dict[str, Path]) -> dict[str, Any]:
-    defaults={'theme':'system','floating':False,'floating_layout':{},'model_path':'',
+    defaults={'theme':'system','floating':False,'floating_layout':{},'split_layout':'side','model_path':'',
               'model_selection_failed':False,'requested_model_path':'','inference_threads':2,
               'model_device':'auto',
-              'advice_timeout_ms':2000,'top_n':3,'debug_capture_enabled':True}
+              'advice_timeout_ms':2000,'top_n':3,'debug_capture_enabled':False}
     p=paths['config_dir']/'preferences.json'
     try:
         obj=json.loads(p.read_text('utf8'))

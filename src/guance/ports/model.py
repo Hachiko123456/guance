@@ -55,8 +55,11 @@ MODEL_MESSAGES: Mapping[str, str] = MappingProxyType({
     "MODEL_INPUT_AMBIGUOUS": "Public action semantics cannot be resolved uniquely.",
     "MODEL_INPUT_OR_INFERENCE": "The required model could not produce a safe recommendation.",
     "MODEL_OUTPUT_INVALID": "Model returned an invalid recommendation.",
+    "MODEL_OUTPUT_NOT_BEATING": "The suggested play does not beat the current winning action; suggestion rejected.",
+    "MODEL_OUTPUT_AMBIGUOUS": "The current winning action admits several interpretations; suggestion rejected.",
     "MODEL_INFERENCE_FAILED": "The required model inference failed.",
     "MODEL_TIMEOUT": "Model inference timed out.",
+    "MODEL_WORKER_EXITED": "The model worker exited during inference.",
     "PROTOCOL_INVALID": "Invalid model protocol message.",
     "PROTOCOL_TOO_LARGE": "Model protocol message exceeds the size limit.",
     "RESPONSE_MISMATCH": "Model response identity does not match the request.",
@@ -99,8 +102,11 @@ class ModelErrorCode(str, Enum):
     MODEL_INPUT_AMBIGUOUS = "MODEL_INPUT_AMBIGUOUS"
     MODEL_INPUT_OR_INFERENCE = "MODEL_INPUT_OR_INFERENCE"
     MODEL_OUTPUT_INVALID = "MODEL_OUTPUT_INVALID"
+    MODEL_OUTPUT_NOT_BEATING = "MODEL_OUTPUT_NOT_BEATING"
+    MODEL_OUTPUT_AMBIGUOUS = "MODEL_OUTPUT_AMBIGUOUS"
     MODEL_INFERENCE_FAILED = "MODEL_INFERENCE_FAILED"
     MODEL_TIMEOUT = "MODEL_TIMEOUT"
+    MODEL_WORKER_EXITED = "MODEL_WORKER_EXITED"
     PROTOCOL_INVALID = "PROTOCOL_INVALID"
     PROTOCOL_TOO_LARGE = "PROTOCOL_TOO_LARGE"
     RESPONSE_MISMATCH = "RESPONSE_MISMATCH"
@@ -112,6 +118,13 @@ class ModelErrorCode(str, Enum):
     CLAIM_UNSUPPORTED = "CLAIM_UNSUPPORTED"
     REQUEST_KIND_UNSUPPORTED = "REQUEST_KIND_UNSUPPORTED"
     CONFIRMED_DECISION_UNAVAILABLE = "CONFIRMED_DECISION_UNAVAILABLE"
+
+
+DANKS_REQUEST_FAILURES = frozenset({
+    "MODEL_INPUT_UNSUPPORTED", "MODEL_INPUT_AMBIGUOUS",
+    "MODEL_OUTPUT_INVALID", "MODEL_OUTPUT_NOT_BEATING", "MODEL_OUTPUT_AMBIGUOUS",
+    "MODEL_INFERENCE_FAILED", "MODEL_TIMEOUT", "MODEL_WORKER_EXITED",
+})
 
 
 class ModelBackendError(ValueError):

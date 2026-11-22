@@ -159,9 +159,8 @@ for name in TARGET_QT_DLLS:
     # appends the source basename itself.
     target_qt_binaries.append((str(source), "PySide6"))
 
-# PySide6 wheels carry a coherent VC runtime set.  PyInstaller and the nested
-# capture helper can otherwise contribute older copies in different search
-# directories, making the Windows loader select an ABI-incompatible DLL.
+# PySide6 wheels carry a coherent VC runtime set for the main executable.
+# The separately frozen capture helper retains its own complete DLL set.
 CONTROLLED_CRT_NAMES = {
     "concrt140.dll", "msvcp140.dll", "msvcp140_1.dll", "msvcp140_2.dll",
     "msvcp140_codecvt_ids.dll", "vcruntime140.dll", "vcruntime140_1.dll",
@@ -242,65 +241,105 @@ def _is_unwanted_qt_plugin(entry: tuple[str, str, str]) -> bool:
             and destination.as_posix() not in ALLOWED_QT_PLUGINS)
 
 
+# Provider families the default package may ship.  The legacy top-level
+# layout stays FableDan/numpy only (已有模型打包行为必须保留); the strict
+# catalog layout additionally accepts DanKS V3 torch bundles.
+_BUNDLE_PROVIDER_RUNTIMES = {
+    "fabledan": ("numpy", None),
+    "danks_v3": ("torch", 2),
+}
+
+
+def _validated_bundle_entries(bundle_root: Path) -> list[tuple[Path, Path]]:
+    """Strictly validate one bundle directory and map its packaged files.
+
+    The checks mirror the runtime catalog discovery (manifest identity,
+    artifact containment and hash, SHA256SUMS coverage, no extra files);
+    failures abort the build instead of shipping an unverified bundle.
+    """
+    manifest_path = bundle_root / "manifest.json"
+    if not manifest_path.is_file():
+        raise SystemExit(f"model bundle manifest is missing: {manifest_path}")
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        provider = manifest.get("provider")
+        runtime = manifest.get("runtime")
+        artifact = manifest.get("artifact")
+        expected_runtime, expected_schema = _BUNDLE_PROVIDER_RUNTIMES.get(provider, (None, None))
+        if expected_runtime is None or runtime != expected_runtime:
+            raise ValueError(f"package does not accept {provider}/{runtime} bundles")
+        if expected_schema is not None and manifest.get("schema_version") != expected_schema:
+            raise ValueError(f"{provider} bundle must declare schema_version={expected_schema}")
+        relative = PurePosixPath(artifact)
+        if relative.is_absolute() or any(part in {"", ".", ".."} for part in relative.parts):
+            raise ValueError("invalid artifact path")
+        artifact_path = (bundle_root.joinpath(*relative.parts)).resolve()
+        if not artifact_path.is_relative_to(bundle_root.resolve()) or not artifact_path.is_file():
+            raise ValueError("artifact is missing or escapes bundle")
+        digest = sha256(artifact_path.read_bytes()).hexdigest()
+        if manifest.get("artifact_sha256") != digest:
+            raise ValueError("artifact hash does not match manifest")
+    except (OSError, UnicodeError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"invalid default model bundle: {manifest_path}: {exc}") from None
+    allowed = {manifest_path.resolve(), artifact_path}
+    sums = bundle_root / "SHA256SUMS"
+    if sums.exists():
+        if not sums.is_file():
+            raise SystemExit(f"invalid model checksum file: {sums}")
+        seen: set[str] = set()
+        for line in sums.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            parts = line.split()
+            if len(parts) != 2 or len(parts[0]) != 64 or any(c not in "0123456789abcdef" for c in parts[0]):
+                raise SystemExit(f"invalid model checksum entry: {sums}")
+            checksum_path = PurePosixPath(parts[1].lstrip("*"))
+            if checksum_path.is_absolute() or any(part in {"", ".", ".."} for part in checksum_path.parts):
+                raise SystemExit(f"invalid model checksum path: {sums}")
+            key = checksum_path.as_posix()
+            if key in seen:
+                raise SystemExit(f"duplicate model checksum entry: {sums}")
+            seen.add(key)
+            target = (bundle_root.joinpath(*checksum_path.parts)).resolve()
+            if (not target.is_relative_to(bundle_root.resolve()) or not target.is_file()
+                    or sha256(target.read_bytes()).hexdigest() != parts[0]):
+                raise SystemExit(f"model checksum mismatch: {sums}")
+        if str(relative) not in seen or manifest.get("artifact_sha256") != digest:
+            raise SystemExit(f"model checksum does not cover artifact: {sums}")
+        allowed.add(sums.resolve())
+    extras = [path for path in bundle_root.rglob("*") if path.is_file() and path.resolve() not in allowed]
+    if extras:
+        raise SystemExit(f"unexpected files in model bundle: {[str(path) for path in extras[:4]]}")
+    return [(path, path.relative_to(bundle_root)) for path in sorted(allowed) if path.is_file()]
+
+
 def _model_bundle_datas() -> list[tuple[str, str]]:
-    """Collect only declared FableDan bundle files; never copy a model tree."""
+    """Collect only declared, strictly validated bundle files; never copy a model tree."""
     if not MODEL_BUNDLE_ROOT.is_dir():
         return []
     entries: list[tuple[str, str]] = []
-    for bundle_root in sorted(path for path in MODEL_BUNDLE_ROOT.iterdir() if path.is_dir()):
+    legacy_roots = [path for path in sorted(MODEL_BUNDLE_ROOT.iterdir())
+                    if path.is_dir() and path.name != "catalog"]
+    for bundle_root in legacy_roots:
+        # Legacy top-level layout keeps its historical FableDan-only contract.
         manifest_path = bundle_root / "manifest.json"
         if not manifest_path.is_file():
             raise SystemExit(f"model bundle manifest is missing: {manifest_path}")
         try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            provider = manifest.get("provider")
-            runtime = manifest.get("runtime")
-            artifact = manifest.get("artifact")
-            if provider != "fabledan" or runtime != "numpy" or not isinstance(artifact, str):
-                raise ValueError("default package accepts only FableDan/numpy bundles")
-            relative = PurePosixPath(artifact)
-            if relative.is_absolute() or any(part in {"", ".", ".."} for part in relative.parts):
-                raise ValueError("invalid artifact path")
-            artifact_path = (bundle_root.joinpath(*relative.parts)).resolve()
-            if not artifact_path.is_relative_to(bundle_root.resolve()) or not artifact_path.is_file():
-                raise ValueError("artifact is missing or escapes bundle")
-            digest = sha256(artifact_path.read_bytes()).hexdigest()
-            if manifest.get("artifact_sha256") != digest:
-                raise ValueError("artifact hash does not match manifest")
+            if (manifest.get("provider") != "fabledan" or manifest.get("runtime") != "numpy"):
+                raise ValueError("top-level default bundles accept only FableDan/numpy bundles")
         except (OSError, UnicodeError, ValueError, TypeError, json.JSONDecodeError) as exc:
             raise SystemExit(f"invalid default model bundle: {manifest_path}: {exc}") from None
-        allowed = {manifest_path.resolve(), artifact_path}
-        sums = bundle_root / "SHA256SUMS"
-        if sums.exists():
-            if not sums.is_file():
-                raise SystemExit(f"invalid model checksum file: {sums}")
-            seen: set[str] = set()
-            for line in sums.read_text(encoding="utf-8").splitlines():
-                if not line.strip():
-                    continue
-                parts = line.split()
-                if len(parts) != 2 or len(parts[0]) != 64 or any(c not in "0123456789abcdef" for c in parts[0]):
-                    raise SystemExit(f"invalid model checksum entry: {sums}")
-                checksum_path = PurePosixPath(parts[1].lstrip("*"))
-                if checksum_path.is_absolute() or any(part in {"", ".", ".."} for part in checksum_path.parts):
-                    raise SystemExit(f"invalid model checksum path: {sums}")
-                key = checksum_path.as_posix()
-                if key in seen:
-                    raise SystemExit(f"duplicate model checksum entry: {sums}")
-                seen.add(key)
-                target = (bundle_root.joinpath(*checksum_path.parts)).resolve()
-                if (not target.is_relative_to(bundle_root.resolve()) or not target.is_file()
-                        or sha256(target.read_bytes()).hexdigest() != parts[0]):
-                    raise SystemExit(f"model checksum mismatch: {sums}")
-            if str(relative) not in seen or manifest.get("artifact_sha256") != digest:
-                raise SystemExit(f"model checksum does not cover artifact: {sums}")
-            allowed.add(sums.resolve())
-        extras = [path for path in bundle_root.rglob("*") if path.is_file() and path.resolve() not in allowed]
-        if extras:
-            raise SystemExit(f"unexpected files in model bundle: {[str(path) for path in extras[:4]]}")
-        destination = Path("data/models") / bundle_root.name
-        entries.extend((str(path), (destination / path.relative_to(bundle_root).parent).as_posix())
-                       for path in sorted(allowed) if path.is_file())
+        for source, relative in _validated_bundle_entries(bundle_root):
+            destination = Path("data/models") / bundle_root.name / relative.parent
+            entries.append((str(source), destination.as_posix()))
+    catalog_root = MODEL_BUNDLE_ROOT / "catalog"
+    if catalog_root.is_dir():
+        for bundle_root in sorted(path for path in catalog_root.iterdir() if path.is_dir()):
+            for source, relative in _validated_bundle_entries(bundle_root):
+                destination = Path("data/models/catalog") / bundle_root.name / relative.parent
+                entries.append((str(source), destination.as_posix()))
     return entries
 
 
@@ -309,7 +348,6 @@ MODEL_BUNDLE_DATAS = _model_bundle_datas()
 datas = [
     (str(APP_ICON), "."),
     (str(APP_QML), "guance/presentation/qml"),
-    *([] if EXCLUDE_CAPTURE_RUNTIME else [(str(MITMPROXY_RUNTIME), "runtime/mitmproxy")]),
     *([(str(MODEL), "data/profiles/tencent_daguandan/models")] if MODEL.is_file() else []),
     *MODEL_BUNDLE_DATAS,
     *target_qml_datas,
@@ -326,6 +364,11 @@ a = Analysis(
     hooksconfig={},
     runtime_hooks=[str(RUNTIME_HOOK)],
     excludes=[
+        # The CA store is not part of any packaged model flow (torch/sympy do
+        # not import it at runtime; the capture runtime is excluded here).
+        # The package acceptance exercises the full model chain, which proves
+        # nothing needed it.
+        "certifi",
         "PySide6.Qt3DAnimation",
         "PySide6.Qt3DCore",
         "PySide6.Qt3DExtras",
@@ -387,6 +430,15 @@ a.binaries = TOC(
 )
 for source in CONTROLLED_CRT_SOURCES:
     a.binaries.append((source.name, str(source), "BINARY"))
+
+# mitmdump is a separate frozen executable. Add it after Analysis to preserve
+# its own DLLs and keep its Python runtime out of the main EXE's DLL search path.
+if not EXCLUDE_CAPTURE_RUNTIME:
+    capture_destination = Path("runtime") / "mitmproxy"
+    a.datas.extend(
+        (str(capture_destination / path.relative_to(MITMPROXY_RUNTIME)), str(path), "DATA")
+        for path in sorted(MITMPROXY_RUNTIME.rglob("*")) if path.is_file()
+    )
 
 pyz = PYZ(a.pure)
 

@@ -221,6 +221,22 @@ def test_controller_ui_signal_consumers_and_operations(tmp_path: Path) -> None:
     controller.close()
 
 
+def test_stop_preserves_the_network_restore_failure_in_the_window(tmp_path: Path, monkeypatch) -> None:
+    controller, vm, runtime, model = build_controller(tmp_path)
+    monkeypatch.setattr(runtime, "stop", lambda: {
+        "ok": False, "state": "stop_error", "error_code": "PROXY_RESTORE_FAILED",
+        "message": "proxy settings changed outside Guance",
+    })
+    try:
+        controller._stop_impl()
+        assert vm.phase == "error"
+        assert not vm.running
+        assert "修复网络" in vm.lastError
+        assert "close" in model.calls
+    finally:
+        controller.close()
+
+
 def test_ui_010_model_import_has_a_controller_consumer(tmp_path: Path) -> None:
     events: list[str] = []
 

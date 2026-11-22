@@ -32,11 +32,6 @@ def _training_recorder_factory(root, **kwargs):
     return TrainingDataRecorder(root, **kwargs)
 
 
-def _proxy_snapshot_factory():
-    from .infrastructure.windows.proxy import WindowsProxyBackend
-    return WindowsProxyBackend().snapshot()
-
-
 def _certificate_inspector(cert_dir):
     from .infrastructure.windows.certificate import WindowsCertificateManager
     return WindowsCertificateManager(cert_dir).inspect()
@@ -131,6 +126,11 @@ def _run_frozen_smoke(args: Any) -> int:
         app.setWindowIcon(QIcon(str(icon_path)))
     paths = app_paths()
     ensure_app_paths(paths)
+    # Frozen packages ship strictly validated model catalog bundles; seed them
+    # into the user's catalog (existing user bundles are never touched).  The
+    # bounded smoke exercises the same provisioning path as a real launch.
+    from .infrastructure.model.package_assets import seed_packaged_catalog_bundles
+    _catalog_seed = seed_packaged_catalog_bundles(paths)
     capture_capability, capture_helper = _capture_helper_status(paths)
     vm = GuanceViewModel()
     _configure_smoke_viewmodel(vm, args)
@@ -225,12 +225,9 @@ def _run_frozen_smoke(args: Any) -> int:
         qInstallMessageHandler(previous_handler)
 
 
-def run_gui(args: Any, extra: list[str] | None = None) -> int:
-    if getattr(args, "frozen_smoke", False):
-        return _run_frozen_smoke(args)
-
+def create_live_controller(vm: GuanceViewModel, paths: dict[str, Path], *, model_client_factory=None):
+    """Compose the live parser, model, and controller without starting capture."""
     from .application.controller import GuanceController
-    from .application.single_instance import SingleInstance, SingleInstanceError
     from .infrastructure.capture.canonical_capture import CanonicalCaptureConverter
     from .infrastructure.capture.diagnostics import BoundedDiagnostics
     from .infrastructure.capture.live_subset import NormalExchangeLiveSubsetProvider
@@ -238,6 +235,53 @@ def run_gui(args: Any, extra: list[str] | None = None) -> int:
     from .infrastructure.model.client import default_client_factory
     from .infrastructure.model.marvel_v2.decision_request import project_confirmed_decision
     from .infrastructure.protocol.live import GAME_HOST, parse_aggregate
+    from .infrastructure.model.package_assets import (
+        DANKS_BUNDLE_DIR_NAME, DANKS_RULES_DIR_NAME, DANKS_RUNTIME_DIR_NAME,
+        SOURCE_ENV, seed_packaged_catalog_bundles,
+    )
+    _catalog_seed = seed_packaged_catalog_bundles(paths)
+    capture_capability, _capture_helper = _capture_helper_status(paths)
+    initial_packaged_model = None
+    rules_source = os.environ.get(SOURCE_ENV, "").strip() or None
+    danks_runtime = paths["root_dir"] / DANKS_RUNTIME_DIR_NAME
+    if danks_runtime.is_dir():
+        initial_packaged_model = (
+            paths["root_dir"] / "data" / "models" / "catalog" / DANKS_BUNDLE_DIR_NAME
+        )
+        if rules_source is None and capture_capability == "available":
+            rules_source = danks_runtime / DANKS_RULES_DIR_NAME
+    vm.apply_status({
+        "phase": "idle", "model_state": "pending",
+        "model_summary": "模型尚未加载；可在设置中导入模型包",
+        "network_mode": (
+            "采集组件不可用（当前包未包含）"
+            if capture_capability == "unavailable" else "自动检测"
+        ),
+    })
+    return GuanceController(
+        vm, paths=paths, model_client_factory=model_client_factory or default_client_factory,
+        aggregate_parser=parse_aggregate, accepted_host=GAME_HOST,
+        runtime_factory=_runtime_factory, diagnostics_factory=BoundedDiagnostics,
+        training_recorder_factory=_training_recorder_factory,
+        certificate_inspector=_certificate_inspector,
+        live_subset_provider=NormalExchangeLiveSubsetProvider(
+            rules_source, allow_danks_opening=True, strongest_wild_declaration=True),
+        canonical_converter_factory=CanonicalCaptureConverter,
+        confirmed_decision_projector=project_confirmed_decision,
+        catalog=ModelCatalog(
+            paths.get("catalog_dir", paths["models_dir"] / "catalog"),
+            paths.get("active_model_file", paths["models_dir"] / "active_model.json"),
+            root=paths["models_dir"],
+        ),
+        initial_packaged_model=initial_packaged_model,
+    )
+
+
+def run_gui(args: Any, extra: list[str] | None = None) -> int:
+    if getattr(args, "frozen_smoke", False):
+        return _run_frozen_smoke(args)
+
+    from .application.single_instance import SingleInstance, SingleInstanceError
 
     app = QApplication.instance() or QApplication([])
     app.setApplicationName("掼策")
@@ -266,35 +310,8 @@ def run_gui(args: Any, extra: list[str] | None = None) -> int:
         app.setWindowIcon(QIcon(str(icon_path)))
     paths = app_paths()
     ensure_app_paths(paths)
-    capture_capability, _capture_helper = _capture_helper_status(paths)
-    from .diagnostics import DiagnosticLog
-    log = DiagnosticLog(paths["logs_dir"])
     vm = GuanceViewModel()
-    vm.apply_status({
-        "phase": "idle", "model_state": "pending",
-        "model_summary": "模型尚未加载；可在设置中导入模型包",
-        "network_mode": (
-            "采集组件不可用（当前包未包含）"
-            if capture_capability == "unavailable" else "自动检测"
-        ),
-    })
-    controller = GuanceController(
-        vm, paths=paths, model_client_factory=default_client_factory,
-        aggregate_parser=parse_aggregate, accepted_host=GAME_HOST,
-        runtime_factory=_runtime_factory, diagnostics_factory=BoundedDiagnostics,
-        training_recorder_factory=_training_recorder_factory,
-        proxy_snapshot_factory=_proxy_snapshot_factory, certificate_inspector=_certificate_inspector,
-        live_subset_provider=NormalExchangeLiveSubsetProvider(
-            os.environ.get("GUANCE_MARVEL_V2_SOURCE", "").strip() or None
-        ),
-        canonical_converter_factory=CanonicalCaptureConverter,
-        confirmed_decision_projector=project_confirmed_decision,
-        catalog=ModelCatalog(
-            paths.get("catalog_dir", paths["models_dir"] / "catalog"),
-            paths.get("active_model_file", paths["models_dir"] / "active_model.json"),
-            root=paths["models_dir"],
-        ),
-    )
+    controller = create_live_controller(vm, paths)
     recovery = controller.recover_stale_runtime_proxy()
     if not recovery.get("ok", False):
         instance.leave()
@@ -304,7 +321,7 @@ def run_gui(args: Any, extra: list[str] | None = None) -> int:
     controller.refresh_preflight()
     engine = create_ui(app, vm)
     root_holder["root"] = engine.rootObjects()[0] if engine.rootObjects() else None
-    engine._guance_keepalive = (paths, log, vm, controller, instance)
+    engine._guance_keepalive = (paths, vm, controller, instance)
     if getattr(args, "exit_after", 0):
         QTimer.singleShot(int(float(args.exit_after) * 1000), app.quit)
     return int(app.exec())

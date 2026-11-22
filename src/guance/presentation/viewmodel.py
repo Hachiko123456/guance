@@ -62,6 +62,8 @@ class GuanceViewModel(QObject):
     diagnosticsChanged = Signal()
     floatingLayoutChanged = Signal()
     floatingLayoutSaveRequested = Signal(dict)
+    splitLayoutChanged = Signal()
+    splitLayoutSaveRequested = Signal(str)
     screenWorkAreaChanged = Signal()
     confirmSeatRequested = Signal(str)
     catalogChanged = Signal()
@@ -70,6 +72,7 @@ class GuanceViewModel(QObject):
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self._page = "assistant"
+        self._split_layout = "side"
         self._theme = "system"
         self._floating = False
         self._demo = False
@@ -179,6 +182,7 @@ class GuanceViewModel(QObject):
     multiplierSummary = Property(str, lambda s: s._multiplier_summary(), notify=tableChanged)
     statusLabel = Property(str, lambda s: s._status_label(), notify=statusChanged)
     floatingLayout = Property(dict, lambda s: deepcopy(s._floating_layout), notify=floatingLayoutChanged)
+    splitLayout = Property(str, lambda s: s._split_layout, notify=splitLayoutChanged)
     seatOrderLabel = Property(str, lambda s: s._seat_order_label(), notify=tableChanged)
     boardAvailable = Property(bool, lambda s: bool(s._table) or bool(s._observation), notify=tableChanged)
     displayLevel = Property(int, lambda s: int(s._table.get("level", s._observation.get("level", 0))), notify=tableChanged)
@@ -192,6 +196,14 @@ class GuanceViewModel(QObject):
     logs = Property(list, lambda s: s._logs, notify=logsChanged)
     diagnostics = Property(list, lambda s: s._diagnostics, notify=diagnosticsChanged)
     lastError = Property(str, lambda s: s._last_error, notify=diagnosticsChanged)
+
+    @Slot(str)
+    def set_split_layout(self, layout: str) -> None:
+        if layout not in ("side", "stacked") or layout == self._split_layout:
+            return
+        self._split_layout = layout
+        self.splitLayoutChanged.emit()
+        self.splitLayoutSaveRequested.emit(layout)
 
     @Slot(str)
     def navigate(self, page: str) -> None:
@@ -543,7 +555,10 @@ class GuanceViewModel(QObject):
         for index, seat in enumerate(order):
             item = selected.get(seat)
             kind = str(item.get("kind", "none")) if item else "none"
-            cards = [display_card(card, level) for card in public_play_display_order(item.get("cards", ()), level)] if item else []
+            cards = [
+                display_card(card, level) for card in
+                public_play_display_order(item.get("cards", ()), level, item.get("combo_type"))
+            ] if item else []
             try:
                 count = int(remaining[seat])
             except (IndexError, KeyError, TypeError, ValueError):
@@ -945,8 +960,12 @@ class GuanceViewModel(QObject):
             return "采集组件未能启动监听。请检查端口 18080 是否被占用，修复后再试。"
         if "proxy" in haystack:
             return "本机代理设置未能安全应用。请点击“修复网络”恢复设置后重试。"
+        if "model_output" in haystack:
+            return "建议未通过校验。请在诊断中查看失败原因。"
+        if "model_inference" in haystack or "model_timeout" in haystack:
+            return "模型计算遇到问题。请在诊断中查看失败原因。"
         if "model" in haystack:
-            return "本地模型未能加载。请在“设置”中导入有效的 .npz 模型文件后重试。"
+            return "模型暂不可用。请在设置中检查已选模型，在诊断中查看原因。"
         if "capture" in haystack or "runtime" in haystack:
             return "采集服务未能启动。请打开“诊断”查看具体原因，修复后再试。"
         # Unknown messages are diagnostic evidence; do not hide them behind a generic label.
@@ -995,7 +1014,10 @@ class GuanceViewModel(QObject):
             else:
                 kind = "play"
                 kind_label = "出牌"
-                cards = [display_card(card, self.level) for card in public_play_display_order(action.get("cards", ()), self.level)]
+                cards = [
+                    display_card(card, self.level) for card in
+                    public_play_display_order(action.get("cards", ()), self.level, action.get("combo_type"))
+                ]
                 card_text = " ".join(str(card.get("label", "?")) for card in cards) or "出牌"
             try:
                 count = int(remaining[seat])
@@ -1104,7 +1126,10 @@ class GuanceViewModel(QObject):
             raw_kind = item.get("kind", "")
             is_pass = raw_kind == 0 or raw_kind == "0" or str(raw_kind).lower() in {"pass", "过牌"}
             kind_key = "pass" if is_pass else str(raw_kind)
-            cards = [display_card(x, self.level) for x in item.get("cards", [])]
+            codes = item.get("cards", ())
+            if kind_key != "play":
+                codes = public_play_display_order(codes, self.level, kind_key)
+            cards = [display_card(code, self.level) for code in codes]
             kind = kind_name(kind_key)
             claims = self._display_claims(item, data)
             score = item.get("score")

@@ -51,6 +51,21 @@ if _marvel_site.is_dir():
             pass
         os.environ["PATH"] = str(_torch_lib) + os.pathsep + os.environ.get("PATH", "")
 
+# The optional frozen DanKS CPU profile vendors its Torch runtime under
+# ``danks_runtime/site-packages`` with the same append-never-prepend and DLL
+# registration rules; profiles without this directory are unaffected.
+_danks_site = base / "danks_runtime" / "site-packages"
+if _danks_site.is_dir():
+    if str(_danks_site) not in sys.path:
+        sys.path.append(str(_danks_site))
+    _torch_lib = _danks_site / "torch" / "lib"
+    if _torch_lib.is_dir():
+        try:
+            _dll_dirs.append(os.add_dll_directory(str(_torch_lib)))
+        except (AttributeError, OSError):
+            pass
+        os.environ["PATH"] = str(_torch_lib) + os.pathsep + os.environ.get("PATH", "")
+
 # Pin the controlled VC runtime and binding support DLLs before any Qt Python
 # extension imports.  This avoids AddDllDirectory's intentionally unspecified
 # directory ordering when multiple wheels contain same-named CRT files.

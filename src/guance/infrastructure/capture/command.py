@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 
 from guance.ports.capture import CaptureConfig, CaptureMode
@@ -41,6 +42,10 @@ def build_mitm_command(config: CaptureConfig) -> list[str]:
     else:
         raise CaptureCommandError(f"unresolved capture mode: {config.mode}")
 
+    allowed_hosts = []
+    if config.allowed_hosts:
+        joined = "|".join(re.escape(host) for host in config.allowed_hosts)
+        allowed_hosts = ["--allow-hosts", rf"(?i)^(?:{joined})\.?(:[0-9]+)?$"]
     return [
         os.fspath(helper),
         *mode_args,
@@ -53,6 +58,7 @@ def build_mitm_command(config: CaptureConfig) -> list[str]:
         "--set",
         "block_global=false",
         "--quiet",
+        *allowed_hosts,
         "-s",
         os.fspath(addon),
     ]

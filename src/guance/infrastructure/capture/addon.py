@@ -49,7 +49,7 @@ class GuanceAddon:
     def websocket_message(self, flow: object) -> None:  # pragma: no cover - executed by mitmdump
         request = getattr(flow, "request", None)
         websocket = getattr(flow, "websocket", None)
-        host = str(getattr(request, "pretty_host", "")).lower()
+        host = str(getattr(request, "pretty_host", "")).lower().rstrip(".")
         if self._allowed and host not in self._allowed:
             return
         messages = getattr(websocket, "messages", ())
@@ -88,6 +88,9 @@ class GuanceAddon:
                 "direction": "client" if bool(getattr(message, "from_client", False)) else "server",
             }
         )
+
+    def websocket_end(self, flow: object) -> None:  # pragma: no cover - executed by mitmdump
+        self._sequence.pop(str(getattr(flow, "id", ""))[:96], None)
 
 
 addons = [GuanceAddon()]

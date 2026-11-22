@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+from collections import Counter
 from typing import Any
 
 from guance.domain.cards import card_parts
@@ -13,7 +14,16 @@ KIND_NAMES = {
     "trips": "三张", "full_house": "三带二", "straight": "顺子",
     "straight_flush": "同花顺", "bomb": "炸弹", "steel_plate": "钢板",
     "consecutive_pairs": "连对", "joker_bomb": "四王炸弹",
+    "full": "三带二", "serial_pair": "连对", "serial_triple": "钢板",
+    "sflush": "同花顺", "rocket": "天王炸",
 }
+_SEQUENCE_SHAPES = {
+    "4": (5, 1), "straight": (5, 1),
+    "6": (3, 2), "serial_pair": (3, 2), "consecutive_pairs": (3, 2),
+    "7": (2, 3), "serial_triple": (2, 3), "steel_plate": (2, 3),
+    "9": (5, 1), "sflush": (5, 1), "straight_flush": (5, 1),
+}
+_PRINTED_SEQUENCE = (1, *range(2, 14), 1)
 _SECRET = re.compile(
     r"(?i)(authorization|cookie|token|password|secret|private_key|openid|session_key)"
     r"(\s*[:=]\s*)(?:Bearer\s+)?[^\s;,]+"
@@ -79,6 +89,50 @@ def hand_display_order(values: list[int] | tuple[int, ...], level: int) -> list[
     return sorted(values, key=key, reverse=True)
 
 
-def public_play_display_order(values: list[int] | tuple[int, ...], level: int) -> list[int]:
-    """Return a new public-play list, low to high, without changing source cards."""
-    return list(reversed(hand_display_order(values, level)))
+def public_play_display_order(values: list[int] | tuple[int, ...], level: int,
+                              kind: str | int | None = None) -> list[int]:
+    """Order displayed plays by their combination, preserving each physical card."""
+    ordered = list(reversed(hand_display_order(values, level)))
+    shape = _SEQUENCE_SHAPES.get(str(kind).lower())
+    full_house = str(kind).lower() in {"5", "full", "full_house", "triple+2"}
+    if not shape and not full_house:
+        return ordered
+    try:
+        faces = [(code, *card_parts(code)[:2]) for code in ordered]
+    except (TypeError, ValueError):
+        return ordered
+    if full_house:
+        counts = Counter(rank for _, _, rank in faces)
+        if sorted(counts.values()) == [2, 3]:
+            return sorted(ordered, key=lambda code: -counts[card_parts(code)[1]])
+        return ordered
+    length, group = shape
+    if len(faces) != length * group:
+        return ordered
+    wilds = [code for code, suit, rank in faces if suit == 2 and rank == level]
+    if result := _sequence_order(faces, (), length, group):
+        return result
+    if wilds:
+        return _sequence_order([face for face in faces if face[0] not in wilds],
+                               wilds, length, group) or ordered
+    return ordered
+
+
+def _sequence_order(faces, wilds, length: int, group: int) -> list[int] | None:
+    cards_by_rank: dict[int, list[int]] = {}
+    for code, _, rank in faces:
+        cards_by_rank.setdefault(rank, []).append(code)
+    if any(len(cards) > group for cards in cards_by_rank.values()):
+        return None
+    windows = [_PRINTED_SEQUENCE[i:i + length]
+               for i in range(len(_PRINTED_SEQUENCE) - length + 1)]
+    windows = [window for window in windows if cards_by_rank.keys() <= set(window)]
+    if len(windows) != 1:
+        return None
+    ordered = []
+    substitutions = iter(wilds)
+    for rank in windows[0]:
+        group_cards = cards_by_rank.get(rank, ())
+        ordered.extend(group_cards)
+        ordered.extend(next(substitutions) for _ in range(group - len(group_cards)))
+    return ordered

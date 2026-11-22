@@ -44,10 +44,12 @@ def default_registry() -> ProviderRegistry:
     from .providers.fabledan import FableDanProvider
     from .providers.guandan import GuandanProvider
     from .providers.guandan_marvel_v2 import GuandanMarvelV2Provider
+    from .danks_v3.provider import DanksV3Provider
     registry = ProviderRegistry()
     registry.register("fabledan", FableDanProvider())
     guandan = GuandanProvider()
     registry.register("guandan", guandan)
     registry.register("builtin.guandan", guandan)
     registry.register("guandan_marvel_v2", GuandanMarvelV2Provider())
+    registry.register("danks_v3", DanksV3Provider())
     return registry

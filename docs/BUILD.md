@@ -84,6 +84,26 @@ bytes/hash、checkpoint hash 后才成功。它不修改模型数学、identity 
 不要对旧的 `release/` 或 `build/pyinstaller` 使用 `--clean`；需要清理时只删除本任务
 新建根内、已解析绝对路径并确认无重解析点越界的目录。
 
+DanKS V3 实桌便携包使用 `--profile danks-cpu`，并用 `--danks-rules-source` 指向
+持有已核验 `guandan/cards.py`、`combos.py`、`round.py`、`state.py` 的目录根。
+构建器在复制前后校验这四个文件的内容。用户运行时使用包内模型、牌规和采集组件。
+
+使用已核验的 DanKS checkpoint 在本地生成模型包。下面的命令会校验权重 SHA-256，
+并在 `data/models/catalog/danks-v3-top10-v1` 下写入权重、清单与校验文件。
+
+```powershell
+$env:PYTHONPATH = (Resolve-Path src).Path
+py -3.12 -B -c "import sys; from guance.infrastructure.model.danks_v3.provider import build_bundle; build_bundle(sys.argv[1], sys.argv[2])" "D:\models\top10_selector_v3_online.pt" "data/models/catalog/danks-v3-top10-v1"
+```
+
+```powershell
+py -3.12 -B scripts/build_release.py --profile danks-cpu `
+  --danks-rules-source <verified-rules-root> `
+  --dist-dir build/acceptance/<task>/dist --work-dir build/acceptance/<task>/work
+```
+
+交付整个 `Guance` 文件夹，包含 `Guance.exe` 和同目录 `_internal`。
+
 也可以直接调用维护规格（此时必须自行确保输出目录安全）：
 
 ```powershell

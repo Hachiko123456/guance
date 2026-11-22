@@ -64,7 +64,7 @@ def app():
 
 
 def build(tmp_path, monkeypatch, *, catalog_root=None, client_class=RecordingClient,
-          preferences=None, env=None):
+          preferences=None, env=None, initial_packaged_model=None):
     monkeypatch.setenv('GUANCE_TRAINING_DATA', '0')
     monkeypatch.delenv('GUANCE_MODEL_PATH', raising=False)
     monkeypatch.delenv('GUANCE_MODEL_BUNDLE', raising=False)
@@ -85,7 +85,10 @@ def build(tmp_path, monkeypatch, *, catalog_root=None, client_class=RecordingCli
     catalog = ModelCatalog(catalog_root, paths["models_dir"] / "active_model.json",
                            root=paths["models_dir"])
     vm = GuanceViewModel()
-    controller = GuanceController(vm, paths=paths, model_client_factory=factory, catalog=catalog)
+    controller = GuanceController(
+        vm, paths=paths, model_client_factory=factory, catalog=catalog,
+        initial_packaged_model=initial_packaged_model,
+    )
     return controller, vm, clients, paths, catalog
 
 
@@ -140,10 +143,29 @@ def test_missing_active_is_explicit_unavailable_without_auto_selection(tmp_path,
         app.processEvents()
 
 
+def test_capture_package_uses_its_initial_model_on_an_empty_profile(tmp_path, monkeypatch, app):
+    bundled = tmp_path / "package" / "danks-v3-top10-v1"
+    controller, vm, clients, _, catalog = build(
+        tmp_path, monkeypatch, initial_packaged_model=bundled)
+    try:
+        assert not catalog.active_file.exists()
+        assert controller.requested_source == bundled
+        assert clients[0].source == bundled
+        assert vm.debugCaptureEnabled is False
+        controller._model.start()
+        app.processEvents()
+        assert vm.modelState == "ready"
+        assert not catalog.active_file.exists()
+    finally:
+        controller.close()
+        app.processEvents()
+
+
 def test_legacy_preference_is_migrated_explicitly(tmp_path, monkeypatch, app):
     legacy = str(tmp_path / "legacy-best.npz")
     controller, vm, clients, paths, catalog = build(
-        tmp_path, monkeypatch, preferences={'model_path': legacy})
+        tmp_path, monkeypatch, preferences={'model_path': legacy},
+        initial_packaged_model=tmp_path / "package" / "danks-v3-top10-v1")
     try:
         document = load_active_selection(catalog.active_file)
         assert document is not None and document.kind == "legacy" and document.path == legacy
@@ -176,7 +198,8 @@ def test_tampered_active_document_fails_closed_without_fallback(tmp_path, monkey
     active.write_text('{"schema_version":1,"kind":"catalog","model_id":"valid-bundle"}',
                       encoding="utf-8")
     controller, vm, clients, _, _ = build(
-        tmp_path, monkeypatch, catalog_root=catalog_root, preferences={'model_path': legacy})
+        tmp_path, monkeypatch, catalog_root=catalog_root, preferences={'model_path': legacy},
+        initial_packaged_model=tmp_path / "package" / "danks-v3-top10-v1")
     try:
         assert controller._selection_failed is True
         assert controller._selection_failure_code == "ACTIVE_SELECTION_INVALID"

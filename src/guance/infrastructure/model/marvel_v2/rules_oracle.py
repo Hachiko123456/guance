@@ -79,7 +79,8 @@ def _normalized_bytes(path: Path) -> bytes:
         _fail("GD_RULES_SOURCE_UNAVAILABLE")
 
 
-def _verify_source(root: Path) -> None:
+def verified_rules_files(root: Path) -> tuple[Path, ...]:
+    """Verify the rules identity and return the four package-relative source paths."""
     root = root.resolve()
     if not root.is_dir():
         _fail("GD_RULES_SOURCE_UNAVAILABLE")
@@ -93,10 +94,11 @@ def _verify_source(root: Path) -> None:
         body = _normalized_bytes(path)
         if len(body) != expected_bytes or sha256(body).hexdigest() != expected_sha:
             _fail("GD_RULES_IDENTITY_MISMATCH")
+    return tuple(Path(name) for name in _SOURCE_FILES)
 
 
 def _load_verified_package(root: Path) -> tuple[ModuleType, ModuleType, ModuleType]:
-    _verify_source(root)
+    verified_rules_files(root)
     # Each verified root gets its own private namespace: two different roots in
     # one process (e.g. a worktree fixture and the frozen runtime source) must
     # never share cached rules modules.
@@ -125,7 +127,7 @@ def _load_verified_package(root: Path) -> tuple[ModuleType, ModuleType, ModuleTy
         _fail("GD_RULES_SOURCE_UNAVAILABLE")
     finally:
         sys.dont_write_bytecode = previous
-    _verify_source(root)
+    verified_rules_files(root)
     return cards, combos, round_module
 
 
@@ -265,7 +267,7 @@ class VerifiedGuandanRulesOracle:
         if combo_type == 8:
             return declaration.length in (4, 5)
         if combo_type == 10:
-            return declaration.length == 6
+            return 6 <= declaration.length <= 10
         return True
 
     def declarations(self, wire_cards: Iterable[int], *, wire_level: int,
@@ -293,18 +295,38 @@ class VerifiedGuandanRulesOracle:
 
     def validate_observed_play(self, wire_cards: Iterable[int], *, wire_level: int,
                                combo_type: int, current: PublicDeclaration | None) -> PublicDeclaration:
-        declaration = self.unique_declaration(wire_cards, wire_level=wire_level, combo_type=combo_type)
-        if current is not None:
-            candidate_combo = self._combination_for(declaration, wire_level)
-            current_combo = self._combination_for(current, wire_level)
-            try:
-                if not self.combos.can_beat(candidate_combo, current_combo):
-                    _fail("LIVE_PLAY_DOES_NOT_BEAT")
-            except RulesOracleError:
-                raise
-            except Exception:
-                _fail("LIVE_PLAY_DOES_NOT_BEAT")
-        return declaration
+        values = self.observed_play_declarations(wire_cards, wire_level=wire_level,
+                                                 combo_type=combo_type, current=current)
+        if len(values) != 1:
+            _fail("LIVE_DECLARATION_AMBIGUOUS")
+        return values[0]
+
+    def observed_play_declarations(self, wire_cards: Iterable[int], *, wire_level: int,
+                                   combo_type: int, current: PublicDeclaration | None,
+                                   strongest_only: bool = False,
+                                   ) -> tuple[PublicDeclaration, ...]:
+        values = self.declarations(wire_cards, wire_level=wire_level, combo_type=combo_type)
+        if not values:
+            _fail("LIVE_DECLARATION_AMBIGUOUS")
+        if current is None and (not strongest_only or len(values) == 1):
+            return values
+        current_combo = self._combination_for(current, wire_level) if current is not None else None
+        try:
+            matches = [(value, self._combination_for(value, wire_level)) for value in values]
+            if current_combo is not None:
+                matches = [(value, combo) for value, combo in matches
+                           if self.combos.can_beat(combo, current_combo)]
+        except RulesOracleError:
+            raise
+        except Exception:
+            _fail("LIVE_PLAY_DOES_NOT_BEAT")
+        if not matches:
+            _fail("LIVE_PLAY_DOES_NOT_BEAT")
+        if strongest_only and len(matches) > 1:
+            strongest = max(combo.comparison_key for _, combo in matches)
+            matches = [(value, combo) for value, combo in matches
+                       if combo.comparison_key == strongest]
+        return tuple(value for value, _ in matches)
 
     def _combination_for(self, declaration: PublicDeclaration, wire_level: int):
         cards = self._cards(declaration.canonical_cards)

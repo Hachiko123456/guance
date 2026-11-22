@@ -269,6 +269,13 @@ def test_public_state_v2_consumers_are_limited_to_explicit_phase7_subset_paths()
         # and real-checkpoint recommendation; no provider/tensor logic leaks).
         root / "infrastructure" / "model" / "marvel_v2" / "decision_request.py",
         root / "infrastructure" / "model" / "marvel_v2" / "recommendation.py",
+        # DanKS V3 phase 3 explicit provider-boundary consumer: declaration to
+        # follow-target conversion and the legal-candidate formation point;
+        # no provider/tensor logic leaks beyond this adapter.
+        root / "infrastructure" / "model" / "danks_v3" / "adapter.py",
+        # DanKS V3 phase 5 controller projection: verbatim Knowledge-to-
+        # DeclaredFacts translation for the IPC request; no state mutation.
+        root / "application" / "controller.py",
     }
     for directory in (root / "infrastructure" / "model", root / "application"):
         for path in directory.rglob("*.py"):

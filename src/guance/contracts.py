@@ -373,13 +373,269 @@ class ConfirmedDecisionRecommendationRequest:
             raise ModelContractError("MODEL_INPUT_INVALID")
 
 
+DECLARED_FACTS_SCHEMA = "Guandan.DeclaredFacts.v2"
+DECLARED_FACTS_SCHEMA_V1 = "Guandan.DeclaredFacts.v1"
+_FACT_STATUSES = ("known", "absent", "unknown", "unsupported")
+_DANKS_V3_TRUSTED_ORIGINS = ("synthetic_normal_entry", "live_capture")
+
+
+class PublicDeclarationProtocol:
+    """Structural protocol for the declaration type used in declared facts.
+
+    Avoids a circular import: the concrete PublicDeclaration lives in
+    public_state_contract and satisfies this shape.
+    """
+    family: str
+    declared_ranks: tuple[int, ...]
+    comparison_rank: int
+    suit: str | None
+    length: int
+    canonical_cards: tuple[int, ...]
+    wild_assignments: tuple[Any, ...]
+    canonical_action_cards: tuple[int, ...]
+
+    def validate_for_level(self, wire_level: object) -> None: ...
+    def to_dict(self) -> dict[str, Any]: ...
+
+
+@dataclass(frozen=True, slots=True)
+class CurrentWinningDeclarationFact:
+    """Declaration fact for the current winning action (view.lead_action).
+
+    ``known`` carries the complete PublicDeclaration; ``absent`` marks a free
+    lead; ``unknown``/``unsupported`` keep an explicit non-fact with a reason
+    code.  Nothing here is ever inferred from zero/False.
+    """
+
+    status: str
+    declaration: PublicDeclarationProtocol | None = None
+    reason: str = ""
+
+    def validate(self) -> None:
+        if self.status not in _FACT_STATUSES:
+            raise ModelContractError("MODEL_INPUT_INVALID")
+        if self.status == "known":
+            if self.declaration is None or self.reason:
+                raise ModelContractError("MODEL_INPUT_INVALID")
+            self.declaration.to_dict()
+        elif self.status == "absent":
+            if self.declaration is not None or self.reason:
+                raise ModelContractError("MODEL_INPUT_INVALID")
+        else:
+            if self.declaration is not None or not self.reason:
+                raise ModelContractError("MODEL_INPUT_INVALID")
+
+    def to_dict(self) -> dict[str, Any]:
+        self.validate()
+        result: dict[str, Any] = {"status": self.status}
+        if self.status == "known":
+            result["declaration"] = self.declaration.to_dict()
+        if self.reason:
+            result["reason"] = self.reason
+        return result
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "CurrentWinningDeclarationFact":
+        if (not isinstance(data, dict) or "status" not in data
+                or set(data) - {"status", "declaration", "reason"}):
+            raise ModelContractError("MODEL_INPUT_INVALID")
+        from guance.public_state_contract import PublicDeclaration
+        declaration = None
+        if data.get("declaration") is not None:
+            declaration = PublicDeclaration.from_dict(data["declaration"])
+        return cls(status=data["status"], declaration=declaration,
+                   reason=data.get("reason", ""))
+
+
+@dataclass(frozen=True, slots=True)
+class ActionDeclarationFact:
+    """Declaration fact for one public history action (index-aligned).
+
+    Pass actions carry status ``absent``; plays carry ``known`` or an explicit
+    ``unknown``/``unsupported``.  ``known`` binds the declaration to the
+    action's exact entity cards.
+    """
+
+    index: int
+    status: str
+    declaration: PublicDeclarationProtocol | None = None
+    reason: str = ""
+
+    def validate(self) -> None:
+        if not _integer(self.index, 1, 10000) or self.status not in _FACT_STATUSES:
+            raise ModelContractError("MODEL_INPUT_INVALID")
+        if self.status == "known":
+            if self.declaration is None or self.reason:
+                raise ModelContractError("MODEL_INPUT_INVALID")
+            self.declaration.to_dict()
+        elif self.status == "absent":
+            if self.declaration is not None or self.reason:
+                raise ModelContractError("MODEL_INPUT_INVALID")
+        else:
+            if self.declaration is not None or not self.reason:
+                raise ModelContractError("MODEL_INPUT_INVALID")
+
+    def to_dict(self) -> dict[str, Any]:
+        self.validate()
+        result: dict[str, Any] = {"index": self.index, "status": self.status}
+        if self.status == "known":
+            result["declaration"] = self.declaration.to_dict()
+        if self.reason:
+            result["reason"] = self.reason
+        return result
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ActionDeclarationFact":
+        if (not isinstance(data, dict) or "index" not in data or "status" not in data
+                or set(data) - {"index", "status", "declaration", "reason"}):
+            raise ModelContractError("MODEL_INPUT_INVALID")
+        from guance.public_state_contract import PublicDeclaration
+        declaration = None
+        if data.get("declaration") is not None:
+            declaration = PublicDeclaration.from_dict(data["declaration"])
+        return cls(index=data["index"], status=data["status"],
+                   declaration=declaration, reason=data.get("reason", ""))
+
+
+@dataclass(frozen=True, slots=True)
+class DeclaredFacts:
+    """Versioned declaration facts attached to a public recommendation request.
+
+    Schema ``Guandan.DeclaredFacts.v1`` per the phase 1 frozen design: the v1
+    view bytes stay unchanged and this additive member carries the confirmed
+    current-winning declaration plus optional aligned history facts and the
+    history provenance summary.  Unknown/unsupported facts stay explicit and
+    never become zero/False.
+    """
+
+    schema: str
+    current_winning_declaration: CurrentWinningDeclarationFact
+    history_declarations: tuple[ActionDeclarationFact, ...] = ()
+    history_origin: str = ""
+    transport_contiguous: str = ""
+    # v2 additions (requirement 2026-11-21): the actual fact values, not just
+    # the status codes - known(False) means CONFIRMED discontinuous.
+    public_history_complete: str = ""
+    history_complete_value: bool | None = None
+    transport_value: bool | None = None
+
+    def validate(self) -> None:
+        if self.schema not in (DECLARED_FACTS_SCHEMA, DECLARED_FACTS_SCHEMA_V1):
+            raise ModelContractError("MODEL_INPUT_UNSUPPORTED")
+        self.current_winning_declaration.validate()
+        if len(self.history_declarations) > 10000:
+            raise ModelContractError("MODEL_INPUT_INVALID")
+        for fact in self.history_declarations:
+            fact.validate()
+        for value in (self.history_origin, self.transport_contiguous,
+                      self.public_history_complete):
+            if value != "" and (not isinstance(value, str) or len(value) > 80
+                                or any(not (char.isalnum() or char in "._:-")
+                                       for char in value)):
+                raise ModelContractError("MODEL_INPUT_INVALID")
+        for value in (self.history_complete_value, self.transport_value):
+            if value is not None and type(value) is not bool:
+                raise ModelContractError("MODEL_INPUT_INVALID")
+
+    def validate_for_view(self, view: "CanonicalPublicGameView") -> None:
+        """Bind the facts to the view: winning declaration to lead_action,
+        history facts index-aligned to public_history."""
+        self.validate()
+        view.validate()
+        fact = self.current_winning_declaration
+        if fact.status == "known":
+            if view.free_lead or view.lead_action is None:
+                raise ModelContractError("MODEL_INPUT_INVALID")
+            if fact.declaration.canonical_cards != tuple(view.lead_action.cards):
+                raise ModelContractError("MODEL_INPUT_INVALID")
+        elif fact.status == "absent":
+            if not view.free_lead:
+                raise ModelContractError("MODEL_INPUT_INVALID")
+        if self.history_declarations:
+            if len(self.history_declarations) != len(view.public_history):
+                raise ModelContractError("MODEL_INPUT_INVALID")
+            for item, action in zip(self.history_declarations, view.public_history):
+                if item.index != action.index:
+                    raise ModelContractError("MODEL_INPUT_INVALID")
+                if item.status == "known" and \
+                        item.declaration.canonical_cards != tuple(action.cards):
+                    raise ModelContractError("MODEL_INPUT_INVALID")
+
+    def to_dict(self) -> dict[str, Any]:
+        self.validate()
+        result: dict[str, Any] = {
+            "schema": self.schema,
+            "current_winning_declaration": self.current_winning_declaration.to_dict(),
+        }
+        if self.history_declarations:
+            result["history_declarations"] = [item.to_dict()
+                                              for item in self.history_declarations]
+        if self.history_origin:
+            result["history_origin"] = self.history_origin
+        if self.transport_contiguous:
+            result["transport_contiguous"] = self.transport_contiguous
+        if self.public_history_complete:
+            result["public_history_complete"] = self.public_history_complete
+        if self.history_complete_value is not None:
+            result["history_complete_value"] = self.history_complete_value
+        if self.transport_value is not None:
+            result["transport_value"] = self.transport_value
+        return result
+
+    @classmethod
+    def from_dict(cls, data: Any) -> "DeclaredFacts":
+        if (not isinstance(data, dict) or "schema" not in data
+                or "current_winning_declaration" not in data
+                or set(data) - {"schema", "current_winning_declaration",
+                                "history_declarations", "history_origin",
+                                "transport_contiguous", "public_history_complete",
+                                "history_complete_value", "transport_value"}):
+            raise ModelContractError("MODEL_INPUT_INVALID")
+        history = tuple(ActionDeclarationFact.from_dict(item)
+                        for item in data.get("history_declarations") or ())
+        value_fields = {}
+        for name in ("history_complete_value", "transport_value"):
+            if data.get(name) is not None:
+                value_fields[name] = data[name]
+        return cls(schema=data["schema"],
+                   current_winning_declaration=CurrentWinningDeclarationFact.from_dict(
+                       data["current_winning_declaration"]),
+                   history_declarations=history,
+                   history_origin=data.get("history_origin", ""),
+                   transport_contiguous=data.get("transport_contiguous", ""),
+                   public_history_complete=data.get("public_history_complete", ""),
+                   **value_fields)
+
+
+@dataclass(frozen=True, slots=True)
+class PublicRecommendationRequestV2:
+    """Public recommendation request carrying versioned declaration facts.
+
+    The view bytes and identity semantics are identical to
+    ``PublicRecommendationRequest``; providers that do not declare
+    ``DeclaredFacts.v1`` support never receive the facts member (legacy
+    wire behavior is byte-identical).
+    """
+
+    identity: RequestIdentity
+    view: "CanonicalPublicGameView"
+    declared_facts: DeclaredFacts
+
+    def validate(self) -> None:
+        if type(self.identity) is not RequestIdentity:
+            raise ModelContractError("MODEL_INPUT_INVALID")
+        self.declared_facts.validate_for_view(self.view)
+
+
 # Backward-compatible name for the public request; the union is explicit and tagged.
 RecommendationRequest = PublicRecommendationRequest
-ModelRecommendationRequest = PublicRecommendationRequest | ConfirmedDecisionRecommendationRequest
+ModelRecommendationRequest = (PublicRecommendationRequest |
+                              PublicRecommendationRequestV2 |
+                              ConfirmedDecisionRecommendationRequest)
 
 
 def recommendation_request_kind(request: ModelRecommendationRequest) -> str:
-    if type(request) is PublicRecommendationRequest:
+    if type(request) in (PublicRecommendationRequest, PublicRecommendationRequestV2):
         return PUBLIC_RECOMMENDATION_KIND
     if type(request) is ConfirmedDecisionRecommendationRequest:
         return CONFIRMED_DECISION_RECOMMENDATION_KIND
@@ -579,7 +835,7 @@ def _card(value: Any) -> bool:
             or suit == 0 and rank in (14, 15))
 
 
-def _public_action(action: PublicAction) -> PublicAction:
+def _public_action(action: PublicAction, *, observed_level: int | None = None) -> PublicAction:
     # Never serialize __dict__, arbitrary nested metadata, or a subclass's to_dict.
     if not isinstance(action, PublicAction):
         raise ModelContractError()
@@ -587,7 +843,6 @@ def _public_action(action: PublicAction) -> PublicAction:
             or not _integer(action.player, 0, 3)
             or not _integer(action.trick, 0, 10000)
             or action.next_player is not None and not _integer(action.next_player, 0, 3)
-            or action.combo_type is not None and not _integer(action.combo_type, 1, 10)
             or action.kind not in ("play", "pass")
             or not isinstance(action.cards, (tuple, list))
             or not all(_card(c) for c in action.cards)
@@ -595,8 +850,27 @@ def _public_action(action: PublicAction) -> PublicAction:
             or len(action.cards) > 27
             or (action.kind == "pass") != (len(action.cards) == 0)):
         raise ModelContractError()
-    return PublicAction(action.index, action.player, action.kind, tuple(action.cards),
-                        action.combo_type, action.next_player, action.trick)
+    cards = tuple(action.cards)
+    combo_type = action.combo_type
+    if (observed_level is not None and action.kind == "play"
+            and _integer(combo_type, 10, 11)):
+        four_kings = set(cards) == {0x0E, 0x0F, 0x10E, 0x10F}
+        # Tencent's 11 is the model's Four Kings (10). Tencent's large
+        # same-rank bomb also uses 10, and becomes a rank bomb in the model.
+        if four_kings:
+            combo_type = 10
+        elif combo_type == 10 and 6 <= len(cards) <= 10:
+            natural_ranks = {card & 15 for card in cards
+                             if not _is_level_wild(card, observed_level)}
+            if len(natural_ranks) != 1 or next(iter(natural_ranks)) > 13:
+                raise ModelContractError()
+            combo_type = 8
+        else:
+            raise ModelContractError()
+    if combo_type is not None and not _integer(combo_type, 1, 10):
+        raise ModelContractError()
+    return PublicAction(action.index, action.player, action.kind, cards,
+                        combo_type, action.next_player, action.trick)
 
 
 def _action_from_wire(value: Any) -> PublicAction:
@@ -695,8 +969,9 @@ class CanonicalPublicGameView:
                    partner_seat=(observation.my_seat + 2) % 4, level=observation.level,
                    trick=observation.trick, hand=tuple(observation.hand),
                    remaining=tuple(observation.remaining),
-                   public_history=tuple(_public_action(a) for a in observation.history),
-                   lead_action=_public_action(observation.lead_action)
+                   public_history=tuple(_public_action(a, observed_level=observation.level)
+                                        for a in observation.history),
+                   lead_action=_public_action(observation.lead_action, observed_level=observation.level)
                    if observation.lead_action is not None else None,
                    free_lead=observation.free_lead)
         view.validate()
@@ -914,16 +1189,348 @@ class LegacyAdviceResultAdapter:
     decode = staticmethod(decode_legacy_advice_result)
 
 
-def validate_advice_for_view(view: CanonicalPublicGameView, result: CanonicalAdviceResult) -> None:
-    """Validate provider output against the public Guandan action boundary."""
+# --- Follow semantics: a following candidate must beat the current target ---
+# Point semantics mirror the frozen reference engine (python_rules._rank_value):
+# the level rank is 15, A=14, jokers 16/17, and the deuce is 2 (the trained
+# reference engine's ordering, kept verbatim for deployment comparison).
+_FAMILY_BY_TYPE = {1: "single", 2: "pair", 3: "triple", 4: "straight",
+                   5: "full", 6: "serial_pair", 7: "serial_triple",
+                   8: "bomb", 9: "sflush", 10: "rocket"}
+_FAMILY_CODE = {"single": 1, "pair": 2, "triple": 3, "straight": 4,
+                "full": 5, "serial_pair": 6, "serial_triple": 7}
+_DECLARATION_FAMILY_CODE = {"SINGLE": 1, "PAIR": 2, "TRIPLE": 3, "STRAIGHT": 4,
+                            "FULL_HOUSE": 5, "PAIR_SEQUENCE": 6,
+                            "TRIPLE_SEQUENCE": 7, "RANK_BOMB": 8,
+                            "STRAIGHT_FLUSH": 9, "FOUR_KINGS": 10}
+# Serial windows in the frozen engine point space (python_rules sequence
+# order A,2,3,...,K,A: the wheel A2345 tops at 5, TJQKA tops at 14; the
+# deuce is point 2).  Windows are tuples of ENGINE POINTS with the window's
+# comparison = its last element.
+_ENGINE_SEQUENCE = (14, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14)
+_SERIAL_WINDOWS = {
+    1: tuple(_ENGINE_SEQUENCE[index:index + 5] for index in range(10)),
+    2: tuple(_ENGINE_SEQUENCE[index:index + 3] for index in range(12)),
+    3: tuple(_ENGINE_SEQUENCE[index:index + 2] for index in range(13)),
+}
+
+
+def _point_of_rank_label(label: str, level: int | None) -> int:
+    if label == "BJ":
+        return 16
+    if label == "RJ":
+        return 17
+    if level is not None and label == _rank_label(level):
+        return 15
+    return {"A": 14, "2": 2, "3": 3, "4": 4, "5": 5, "6": 6, "7": 7, "8": 8,
+            "9": 9, "T": 10, "J": 11, "Q": 12, "K": 13}.get(label, 0)
+
+
+def _rank_label(wire_rank: int) -> str:
+    # Wire ranks 11/12/13 are J/Q/K (the phase 1 frozen engine-label mapping;
+    # str(11..13) would make the point lookup return 0 - same family as the
+    # phase 1 returned defect).
+    return {1: "A", 2: "2", 10: "T", 11: "J", 12: "Q", 13: "K"}.get(
+        wire_rank, str(wire_rank) if 3 <= wire_rank <= 9 else "")
+
+
+def _card_rank_label(card: int) -> str:
+    if (card >> 4) & 15 == 0:
+        return {14: "BJ", 15: "RJ"}[card & 15]
+    return _rank_label(card & 15)
+
+
+def _is_level_wild(card: int, level: int) -> bool:
+    return ((card >> 4) & 15) == 2 and (card & 15) == level
+
+
+def _natural_combo_points(cards: tuple[int, ...], kind: str, level: int) -> list[int]:
+    # A level card retains its natural point inside a sequence. Only the
+    # heart of the level may fill a gap. One-rank plays use the level bonus.
+    comparison_level = None if kind in ("straight", "serial_pair", "serial_triple", "sflush") else level
+    return [_point_of_rank_label(_card_rank_label(card), comparison_level)
+            for card in cards if not _is_level_wild(card, level)]
+
+
+def _bomb_identity(size: int, comparison_point: int) -> tuple[int, int, int]:
+    if size >= 6:
+        return (80 + min(size, 8), size, comparison_point)
+    if size == 5:
+        return (60, size, comparison_point)
+    return (50, size, comparison_point)
+
+
+def _same_rank_comparison(natural_points: list[int]) -> int:
+    """Comparison point of a one-rank combo; wilds must take the natural
+    rank (the only fixed-size interpretation), all-wild means the level."""
+    if not natural_points:
+        return 15
+    return max(natural_points)
+
+
+def _best_serial_top(natural_points: list[int], wilds: int, group: int) -> int:
+    """Highest serial window top the cards can realize (wilds fill gaps).
+
+    Windows and tops are engine points; natural cards must fall inside the
+    window (no duplicates within one serial) and wilds cover the gaps."""
+    distinct = sorted(set(natural_points))
+    best = 0
+    for window in _SERIAL_WINDOWS[group]:
+        if any(point not in window for point in distinct):
+            continue
+        missing = len(window) - len(distinct)
+        if missing < 0 or missing > wilds:
+            continue
+        best = max(best, window[-1])
+    return best
+
+
+def _combo_identity(cards: tuple[int, ...], kind: str, level: int) -> tuple:
+    """Comparable identity of one combo under max-strength wild interpretation.
+
+    Bombs: (1, tier, size, rank_point).  Non-bombs: (0, size, family_code,
+    comparison_point).  Different non-bomb families never compare equal.
+    """
+    natural_points = _natural_combo_points(cards, kind, level)
+    wilds = sum(1 for card in cards if _is_level_wild(card, level))
+    if kind == "rocket":
+        return (1, 100, 0, 0)
+    if kind == "sflush":
+        return (1, 70, 0, _best_serial_top(natural_points, wilds, 1))
+    if kind == "bomb":
+        return (1,) + _bomb_identity(len(cards), _same_rank_comparison(natural_points))
+    size = len(cards)
+    if kind in ("single", "pair", "triple"):
+        return (0, size, _FAMILY_CODE[kind], _same_rank_comparison(natural_points))
+    if kind == "full":
+        counts: dict[int, int] = {}
+        for point in natural_points:
+            counts[point] = counts.get(point, 0) + 1
+        best = 0
+        for triple_point in sorted(counts, reverse=True):
+            need = 3 - counts[triple_point]
+            if need < 0 or need > wilds:
+                continue
+            left = wilds - need
+            for pair_point, pair_count in counts.items():
+                if pair_point != triple_point and pair_count + left >= 2:
+                    best = max(best, triple_point)
+                    break
+            else:
+                if left >= 2:
+                    best = max(best, triple_point)
+        return (0, size, _FAMILY_CODE["full"], best)
+    if kind == "straight":
+        return (0, size, _FAMILY_CODE["straight"],
+                _best_serial_top(natural_points, wilds, 1))
+    if kind == "serial_pair":
+        return (0, size, _FAMILY_CODE["serial_pair"],
+                _best_serial_top(natural_points, wilds, 2))
+    if kind == "serial_triple":
+        return (0, size, _FAMILY_CODE["serial_triple"],
+                _best_serial_top(natural_points, wilds, 3))
+    # triple+1 / triple+2 / four+2 / play and other descriptive kinds never
+    # appear as follows in the validated provider output; shape checks above
+    # have already constrained them.
+    return (0, size, 0, 0)
+
+
+def _declared_target_identity(declaration, level: int) -> tuple:
+    """Comparable identity of a confirmed PublicDeclaration target."""
+    family = declaration.family
+    code = _DECLARATION_FAMILY_CODE[family]
+    size = declaration.length
+    if family in _DECLARATION_SERIAL_GROUPS:
+        # Sequence families compare in the natural engine window space (the
+        # canonical cards fix the realized window; its top is the comparison
+        # point).  The level-card 15 rule is a one-rank-family rule and never
+        # applies here: at level 5 the wheel A2345 tops at 5, not 15.
+        top = _declared_serial_top(declaration)
+        if family == "STRAIGHT_FLUSH":
+            return (1, 70, 0, top)
+        return (0, size, code, top)
+    gd_comparison = declaration.comparison_rank
+    gd_level = {1: 14, 2: 15}.get(level, level)
+    if gd_comparison == gd_level:
+        point = 15
+    else:
+        point = {14: 14, 15: 2}.get(gd_comparison, gd_comparison)
+    if family == "FOUR_KINGS":
+        return (1, 100, 0, 0)
+    if family == "STRAIGHT_FLUSH":
+        return (1, 70, 0, point)
+    if family == "RANK_BOMB":
+        return (1,) + _bomb_identity(size, point)
+    return (0, size, code, point)
+
+
+_DECLARATION_SERIAL_GROUPS = {"STRAIGHT": 1, "STRAIGHT_FLUSH": 1,
+                              "PAIR_SEQUENCE": 2, "TRIPLE_SEQUENCE": 3}
+
+
+def _declared_serial_top(declaration) -> int:
+    """Natural engine-space comparison top of a confirmed sequence target.
+
+    The confirmed declaration's canonical cards (wild assignments already
+    resolved) fix the realized natural window; the comparison point is that
+    window's last engine point (A=14, deuce=2, wheel A2345 tops 5).  The
+    declared GD comparison rank must agree with the window top (engine point
+    2 <-> GD 15 for the A-2 serial wheel); any disagreement fails closed.
+    """
+    faces = declaration._effective_faces(declaration.canonical_cards,
+                                         declaration.wild_assignments)
+    points = sorted({{14: 14, 15: 2}.get(rank, rank) for rank, _suit, _card in faces})
+    group = _DECLARATION_SERIAL_GROUPS[declaration.family]
+    matches = [window for window in _SERIAL_WINDOWS[group] if set(window) == set(points)]
+    if len(matches) != 1:
+        raise ModelContractError("MODEL_INPUT_INVALID")
+    top = matches[0][-1]
+    if {2: 15}.get(top, top) != declaration.comparison_rank:
+        raise ModelContractError("MODEL_INPUT_INVALID")
+    return top
+
+
+def _engine_natural_counts(values: list[int]) -> dict[int, int]:
+    """Natural wire rank values -> engine point counts (A=14, deuce=2)."""
+    counts: dict[int, int] = {}
+    for value in values:
+        point = {1: 14, 2: 2}.get(value, value)
+        counts[point] = counts.get(point, 0) + 1
+    return counts
+
+
+def _serial_feasible(counts: dict[int, int], wilds: int, group: int) -> bool:
+    """Serial feasibility in the engine point space: some consecutive window
+    of `group`-sized ranks covers every natural rank, no rank exceeds the
+    group multiplicity, and the wilds fill exactly the gaps."""
+    for window in _SERIAL_WINDOWS[group]:
+        if any(point not in window for point in counts):
+            continue
+        if any(count > group for count in counts.values()):
+            continue
+        missing = sum(group - counts.get(point, 0) for point in window)
+        if missing == wilds:
+            return True
+    return False
+
+
+def _shape_ok(kind: str, cards: tuple[int, ...], values: list[int],
+              natural_values: list[int], wild_count: int, level: int) -> bool:
+    """Shape feasibility; the heart-level card may complete any group.
+
+    Natural-only shapes pass unchanged; a wild-containing combo is feasible
+    when some assignment of the wilds realizes the kind's shape.
+    """
+    if kind == "rocket":
+        return not wild_count and values == [14, 14, 15, 15]
+    if kind == "sflush":
+        suits = {(card >> 4) & 15 for card in cards if not _is_level_wild(card, level)}
+        return (len(cards) == 5 and len(suits) == 1 and 0 not in suits
+                and _serial_feasible(_engine_natural_counts(natural_values), wild_count, 1))
+
+    if wild_count == 0:
+        counts = sorted({value: values.count(value) for value in set(values)}.values())
+        if kind == "single":
+            return len(cards) == 1
+        if kind == "pair":
+            return len(cards) == 2 and counts == [2]
+        if kind == "triple":
+            return len(cards) == 3 and counts == [3]
+        if kind == "full":
+            return len(cards) == 5 and counts == [2, 3]
+        if kind == "triple+1":
+            return len(cards) == 4 and counts == [1, 3]
+        if kind == "triple+2":
+            return len(cards) == 5 and counts == [2, 3]
+        if kind == "four+2":
+            return len(cards) == 6 and 4 in counts
+        if kind == "bomb":
+            return len(cards) >= 4 and counts == [len(cards)]
+        if kind == "straight":
+            # Engine point space: the wire-value consecutiveness check broke
+            # A-high windows (T,J,Q,K,A -> [10,11,12,13,1]).
+            return (len(cards) == 5
+                    and _serial_feasible(_engine_natural_counts(values), 0, 1))
+        if kind == "serial_pair":
+            return (len(cards) == 6
+                    and _serial_feasible(_engine_natural_counts(values), 0, 2))
+        if kind == "serial_triple":
+            return (len(cards) == 6
+                    and _serial_feasible(_engine_natural_counts(values), 0, 3))
+        return True  # descriptive kinds (play) and pass handled by callers
+
+    # Wild-aware feasibility: distribute the wilds over the natural ranks.
+    distinct_naturals = sorted(set(natural_values))
+    if kind == "single":
+        return len(cards) == 1
+    if kind == "pair":
+        return len(cards) == 2 and len(distinct_naturals) <= 1
+    if kind == "triple":
+        return len(cards) == 3 and len(distinct_naturals) <= 1
+    if kind == "bomb":
+        return len(cards) >= 4 and len(distinct_naturals) <= 1
+    if kind == "full":
+        counts: dict[int, int] = {}
+        for value in natural_values:
+            counts[value] = counts.get(value, 0) + 1
+        for triple in sorted(counts, reverse=True):
+            need = 3 - counts[triple]
+            if need < 0 or need > wild_count:
+                continue
+            left = wild_count - need
+            for pair, pair_count in counts.items():
+                if pair != triple and pair_count + left >= 2:
+                    return True
+            if left >= 2:
+                return True
+        return False
+    if kind == "straight":
+        return (len(cards) == 5
+                and _serial_feasible(_engine_natural_counts(natural_values),
+                                     wild_count, 1))
+    if kind == "serial_pair":
+        return (len(cards) == 6
+                and _serial_feasible(_engine_natural_counts(natural_values),
+                                     wild_count, 2))
+    if kind == "serial_triple":
+        return (len(cards) == 6
+                and _serial_feasible(_engine_natural_counts(natural_values),
+                                     wild_count, 3))
+    if kind == "triple+1":
+        counts = {}
+        for value in natural_values:
+            counts[value] = counts.get(value, 0) + 1
+        for triple in sorted(counts, reverse=True):
+            need = 3 - counts[triple]
+            if 0 <= need <= wild_count and len(cards) == 4:
+                return True
+        return False
+    if kind == "triple+2":
+        return len(cards) == 5 and _shape_ok("full", cards, values,
+                                             natural_values, wild_count, level)
+    if kind == "four+2":
+        counts = {}
+        for value in natural_values:
+            counts[value] = counts.get(value, 0) + 1
+        return len(cards) == 6 and any(count + wild_count >= 4
+                                       for count in counts.values())
+    return True
+
+
+def validate_advice_for_view(view: CanonicalPublicGameView, result: CanonicalAdviceResult,
+                             *, declared_facts: "DeclaredFacts | None" = None) -> None:
+    """Validate provider output against the public Guandan action boundary.
+
+    When the view is a follow (not a free lead), every non-pass candidate
+    must beat the current winning action.  The target's comparison identity
+    comes from the confirmed declaration when ``declared_facts`` is provided;
+    without declared facts it is derived from the lead action's public cards,
+    and a wild-containing lead whose interpretation would change the verdict
+    fails closed (MODEL_OUTPUT_AMBIGUOUS) instead of guessing.
+    """
     view.validate()
+    if declared_facts is not None:
+        declared_facts.validate_for_view(view)
     result.to_dict()
-
-    def ranks(cards: tuple[int, ...]) -> list[int]:
-        return sorted(card & 0x0F for card in cards)
-
-    def consecutive(values: list[int]) -> bool:
-        return len(values) == len(set(values)) and all(b == a + 1 for a, b in zip(values, values[1:]))
 
     kind_aliases = {"0": "pass", "1": "single", "2": "pair", "3": "triple",
                     "4": "straight", "5": "full", "6": "serial_pair",
@@ -932,43 +1539,131 @@ def validate_advice_for_view(view: CanonicalPublicGameView, result: CanonicalAdv
              "serial_triple", "triple+1", "triple+2", "four+2", "bomb", "rocket",
              "sflush", "play"}
     hand = set(view.hand)
+    identities = []
     for candidate in result.candidates:
         cards = tuple(candidate.cards)
         kind = kind_aliases.get(candidate.kind, candidate.kind)
         if kind == "pass":
             if view.free_lead or cards:
                 raise ModelContractError("MODEL_OUTPUT_INVALID")
+            identities.append(None)
             continue
         if (kind not in known or not cards or len(cards) != len(set(cards))
                 or not set(cards) <= hand):
             raise ModelContractError("MODEL_OUTPUT_INVALID")
-        values = ranks(cards)
-        counts = sorted({value: values.count(value) for value in set(values)}.values())
-        if kind == "single" and len(cards) != 1:
+        raw_values = [card & 0x0F for card in cards]
+        values = sorted(raw_values)
+        wild_count = sum(1 for card in cards if _is_level_wild(card, view.level))
+        natural_values = [value for card, value in zip(cards, raw_values)
+                          if not _is_level_wild(card, view.level)]
+        if not _shape_ok(kind, cards, values, natural_values, wild_count,
+                         view.level):
             raise ModelContractError("MODEL_OUTPUT_INVALID")
-        if kind == "pair" and (len(cards) != 2 or counts != [2]):
+        identities.append(_combo_identity(cards, kind, view.level))
+
+    if view.free_lead:
+        return
+    # Follow state: verify every non-pass candidate beats the target.
+    fact = declared_facts.current_winning_declaration if declared_facts is not None else None
+    ambiguous = fact is not None and fact.status in ("unknown", "unsupported")
+    target = None
+    max_target = None
+    if fact is not None and fact.status == "known":
+        # The confirmed declaration is authoritative even when the raw cards
+        # admit other interpretations.
+        target = _declared_target_identity(fact.declaration, view.level)
+    elif not ambiguous:
+        lead = view.lead_action
+        lead_kind = _FAMILY_BY_TYPE.get(lead.combo_type)
+        if lead_kind is None:
             raise ModelContractError("MODEL_OUTPUT_INVALID")
-        if kind == "triple" and (len(cards) != 3 or counts != [3]):
-            raise ModelContractError("MODEL_OUTPUT_INVALID")
-        if kind == "full" and (len(cards) != 5 or counts != [2, 3]):
-            raise ModelContractError("MODEL_OUTPUT_INVALID")
-        if kind == "triple+1" and (len(cards) != 4 or counts != [1, 3]):
-            raise ModelContractError("MODEL_OUTPUT_INVALID")
-        if kind == "triple+2" and (len(cards) != 5 or counts != [2, 3]):
-            raise ModelContractError("MODEL_OUTPUT_INVALID")
-        if kind == "four+2" and (len(cards) != 6 or 4 not in counts):
-            raise ModelContractError("MODEL_OUTPUT_INVALID")
-        if kind == "bomb" and (len(cards) < 4 or counts != [len(cards)]):
-            raise ModelContractError("MODEL_OUTPUT_INVALID")
-        if kind == "rocket" and (len(cards) not in {2, 4} or not all(value >= 14 for value in values)):
-            raise ModelContractError("MODEL_OUTPUT_INVALID")
-        if kind == "straight" and (len(cards) < 5 or not consecutive(values)):
-            raise ModelContractError("MODEL_OUTPUT_INVALID")
-        if kind == "serial_pair":
-            unique = sorted(set(values))
-            if len(cards) != len(unique) * 2 or any(values.count(value) != 2 for value in unique) or not consecutive(unique):
-                raise ModelContractError("MODEL_OUTPUT_INVALID")
-        if kind == "serial_triple":
-            unique = sorted(set(values))
-            if len(cards) != len(unique) * 3 or any(values.count(value) != 3 for value in unique) or not consecutive(unique):
-                raise ModelContractError("MODEL_OUTPUT_INVALID")
+        max_target = _combo_identity(tuple(lead.cards), lead_kind, view.level)
+        min_target = _min_combo_identity(tuple(lead.cards), lead_kind, view.level)
+        if min_target != max_target:
+            # A wild-containing lead whose interpretation changes the verdict
+            # cannot be verified from public cards alone; fail closed.
+            ambiguous = True
+    for identity in identities:
+        if identity is None:
+            continue  # pass is always a legal follow
+        if ambiguous:
+            raise ModelContractError("MODEL_OUTPUT_AMBIGUOUS")
+        expected = target if target is not None else max_target
+        if not _beats(identity, expected):
+            raise ModelContractError("MODEL_OUTPUT_NOT_BEATING")
+
+
+def _beats(candidate: tuple, target: tuple) -> bool:
+    if candidate[0] != target[0]:
+        return candidate[0] == 1  # bomb-like beats non-bomb
+    if candidate[0] == 1:
+        return candidate[1:4] > target[1:4]
+    if candidate[2] != target[2] or candidate[1] != target[1]:
+        return False  # different family or size never beats
+    return candidate[3] > target[3]
+
+
+def _min_combo_identity(cards: tuple[int, ...], kind: str, level: int) -> tuple:
+    """Weakest legal interpretation of a combo (wilds assigned to minimize).
+
+    Used only to detect whether a wild-containing lead is interpretation-
+    dependent; same structure as _combo_identity.
+    """
+    natural_points = _natural_combo_points(cards, kind, level)
+    wilds = sum(1 for card in cards if _is_level_wild(card, level))
+    if kind == "rocket":
+        return (1, 100, 0, 0)
+    if kind == "sflush":
+        return (1, 70, 0, _min_serial_top(natural_points, wilds, 1))
+    if kind == "bomb":
+        return (1,) + _bomb_identity(len(cards), _min_same_rank(natural_points))
+    size = len(cards)
+    if kind in ("single", "pair", "triple"):
+        return (0, size, _FAMILY_CODE[kind], _min_same_rank(natural_points))
+    if kind == "full":
+        counts: dict[int, int] = {}
+        for point in natural_points:
+            counts[point] = counts.get(point, 0) + 1
+        best = None
+        for triple_point in sorted(counts):
+            need = 3 - counts[triple_point]
+            if need < 0 or need > wilds:
+                continue
+            left = wilds - need
+            for pair_point, pair_count in counts.items():
+                if pair_point != triple_point and pair_count + left >= 2:
+                    best = triple_point if best is None else min(best, triple_point)
+                    break
+            else:
+                if left >= 2:
+                    best = triple_point if best is None else min(best, triple_point)
+        return (0, size, _FAMILY_CODE["full"], best if best is not None else 0)
+    if kind == "straight":
+        return (0, size, _FAMILY_CODE["straight"],
+                _min_serial_top(natural_points, wilds, 1))
+    if kind == "serial_pair":
+        return (0, size, _FAMILY_CODE["serial_pair"],
+                _min_serial_top(natural_points, wilds, 2))
+    if kind == "serial_triple":
+        return (0, size, _FAMILY_CODE["serial_triple"],
+                _min_serial_top(natural_points, wilds, 3))
+    return (0, size, 0, 0)
+
+
+def _min_same_rank(natural_points: list[int]) -> int:
+    if not natural_points:
+        return 15
+    return min(natural_points)
+
+
+def _min_serial_top(natural_points: list[int], wilds: int, group: int) -> int:
+    distinct = sorted(set(natural_points))
+    best = None
+    for window in _SERIAL_WINDOWS[group]:
+        if any(point not in window for point in distinct):
+            continue
+        missing = len(window) - len(distinct)
+        if missing < 0 or missing > wilds:
+            continue
+        best = window[-1] if best is None else min(best, window[-1])
+    return best if best is not None else 0

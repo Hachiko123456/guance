@@ -28,7 +28,7 @@ def _qml_root() -> Path:
     return source_root
 
 
-def create_ui(app: Any, viewmodel: Any) -> QQmlApplicationEngine:
+def create_ui(app: Any, viewmodel: Any, *, qml_root: Path | None = None) -> QQmlApplicationEngine:
     """Create and load the visible QML application window.
 
     The caller owns the returned engine and must keep it alive for the duration
@@ -37,7 +37,7 @@ def create_ui(app: Any, viewmodel: Any) -> QQmlApplicationEngine:
     """
     engine = QQmlApplicationEngine(app)
     engine.rootContext().setContextProperty("viewModel", viewmodel)
-    main_qml = _qml_root() / "Main.qml"
+    main_qml = (qml_root if qml_root is not None else _qml_root()) / "Main.qml"
     if not main_qml.exists():
         raise FileNotFoundError(f"QML entry point not found: {main_qml}")
     engine.load(QUrl.fromLocalFile(str(main_qml)))

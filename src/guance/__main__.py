@@ -44,4 +44,10 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    # Frozen-package multiprocessing: the DanKS V3 partition precompute spawns
+    # worker processes; freeze_support intercepts the spawned child bootstrap
+    # before the GUI/worker entry runs (no-op unfrozen and on non-Windows).
+    import multiprocessing
+
+    multiprocessing.freeze_support()
     raise SystemExit(main())

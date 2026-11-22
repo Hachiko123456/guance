@@ -1,25 +1,54 @@
 from __future__ import annotations
 
 import json
+import os
+from itertools import product
 from pathlib import Path
 
 import pytest
 
 from guance.application.controller import GuanceController
+from guance.application.trusted_replay import project_trusted_replay_facts
 from guance.infrastructure.capture.live_subset import NormalExchangeLiveSubsetProvider
 from guance.contracts import SourceFrame
 from guance.infrastructure.capture.canonical_capture import CanonicalCaptureConverter, validate_v2_candidate
+from guance.infrastructure.model.danks_v3.adapter import declaration_to_follow_target
+from guance.infrastructure.model.danks_v3.vendor.guandan.engine.moves import Moves
+from guance.infrastructure.model.marvel_v2.action_decoder import declaration_tokens
+from guance.infrastructure.model.marvel_v2.contracts import ActionDeclaration
+from guance.infrastructure.model.marvel_v2.rules_oracle import RulesOracleError, VerifiedGuandanRulesOracle
 from guance.infrastructure.protocol.live import COMMAND_VARIANTS, GAME_HOST, parse_aggregate
 from guance.presentation.viewmodel import GuanceViewModel
-from guance.public_state_contract import guandan_card_id_to_wire
+from guance.public_state_contract import guandan_card_id_to_wire, wire_card_to_guandan_id
 from tests.protocol.test_live_protocol import aggregate, field, record, varint
 
 # Frozen materialized runtime source (hash-verified GD-RULES, Phase 2 evidence);
 # the live Guandan worktree is deliberately never used as a rules/runtime root.
-SOURCE = Path(r"D:\project\guance\build\acceptance\guance-model-platform-20261016"
-              r"\phase2\runtime\marvel-e5c82e7c-d7acbc8d\source")
+SOURCE = Path(os.environ.get(
+    "GUANCE_VERIFIED_RULES_SOURCE",
+    r"D:\project\guance\build\acceptance\guance-model-platform-20261016"
+    r"\phase2\runtime\marvel-e5c82e7c-d7acbc8d\source",
+))
 pytestmark = pytest.mark.skipif(not SOURCE.is_dir(), reason="verified Guandan source unavailable")
 SENTINEL = (1 << 64) - 1
+
+
+@pytest.mark.parametrize("size", range(6, 11))
+def test_wire_large_bomb_declaration_between_straight_flush_and_four_kings(size):
+    rules = VerifiedGuandanRulesOracle(SOURCE)
+    level = 5
+    straight_flush = rules.unique_declaration(
+        (0x36, 0x37, 0x38, 0x39, 0x3A), wire_level=level, combo_type=9)
+    kings = rules.unique_declaration(
+        (0x0E, 0x0F, 0x10E, 0x10F), wire_level=level, combo_type=11)
+    cards = (0x1B, 0x2B, 0x3B, 0x4B, 0x11B, 0x12B, 0x13B, 0x14B, 0x25, 0x125)[:size]
+    bomb = rules.validate_observed_play(cards, wire_level=level, combo_type=10,
+                                        current=straight_flush)
+    assert bomb.family == "RANK_BOMB" and bomb.length == size
+    assert rules.validate_observed_play(kings.canonical_cards, wire_level=level,
+                                        combo_type=11, current=bomb) == kings
+    with pytest.raises(RulesOracleError, match="LIVE_PLAY_DOES_NOT_BEAT"):
+        rules.validate_observed_play(cards, wire_level=level, combo_type=10, current=kings)
 
 
 class FakeModel:
@@ -29,7 +58,7 @@ class FakeModel:
     def invalidate(self) -> None:
         self.calls.append("invalidate")
 
-    def submit(self, _observation) -> None:
+    def submit(self, _observation, *, declared_facts=None, budget_seconds=None) -> None:
         self.calls.append("submit")
 
     def close(self) -> None:
@@ -344,8 +373,13 @@ def _first_settled_game(driver: EngineDriver) -> list[list[int]]:
     return hands
 
 
-def _negative_engine() -> tuple[NormalExchangeLiveSubsetProvider, EngineDriver]:
-    subset = NormalExchangeLiveSubsetProvider(SOURCE)
+def _negative_engine(*, allow_danks_opening: bool = False,
+                     strongest_wild_declaration: bool = False,
+                     ) -> tuple[NormalExchangeLiveSubsetProvider, EngineDriver]:
+    subset = NormalExchangeLiveSubsetProvider(
+        SOURCE, allow_danks_opening=allow_danks_opening,
+        strongest_wild_declaration=strongest_wild_declaration,
+    )
     engine = SessionEngine(
         "desktop", aggregate_parser=parse_aggregate, accepted_host=GAME_HOST,
         event_adapter=subset.adapt_event, event_observer=subset.observe_applied,
@@ -374,6 +408,270 @@ def test_first_observed_game_is_bounded_ineligible():
     driver.send(3004, start_body(1))
     assert subset.model_adapter_eligible_count == 0
     assert subset.drain_decisions() == ()
+
+
+@pytest.mark.parametrize("init", [None, "other_shape", "confirmed", "gap"])
+def test_danks_opening_requires_contiguous_deal_init_and_start(init):
+    subset, driver = _negative_engine(allow_danks_opening=True)
+    subset.bind_runtime_session("opening-test")
+    hand = list(range(27, 54))
+    driver.send(3001, deal_body(hand))
+    driver.send(3019, observer_body(1, hand))
+    if init == "other_shape":
+        driver.send(3011, exchange_init_body())
+    elif init in {"confirmed", "gap"}:
+        driver.send(3011, field(4, 2, b"") * 4)
+    if init == "gap":
+        driver.sequence += 1
+    driver.send(3004, start_body(1))
+    obs = driver.engine.latest_observation
+    projected = project_trusted_replay_facts(obs, subset) if obs is not None else None
+    assert (projected is not None) == (init == "confirmed")
+    assert subset.drain_decisions() == ()
+    if projected is not None:
+        view, facts = projected
+        assert view.free_lead and not view.public_history
+        assert facts.history_origin == "live_capture"
+        assert facts.history_complete_value is True and facts.transport_value is True
+
+
+@pytest.mark.parametrize("exchange", [False, True])
+def test_danks_projects_equivalent_level_bomb_without_making_an_exact_declaration(exchange):
+    subset, driver = _negative_engine(allow_danks_opening=True)
+    subset.bind_runtime_session("equivalent-level-bomb")
+    hand = list(range(27, 54))
+    if exchange:
+        _first_settled_game(driver)
+        tribute, returned = _second_game_exchange_prefix(driver, hand)
+        driver.send(3012, tribute_3012(1, tribute, 0, [card for card in hand if card != tribute]))
+        driver.send(3013, tribute_3013(1, tribute, 0))
+        driver.send(3014, return_3014(0, returned, 1, list(range(27))))
+        driver.send(3015, summary_3015(tribute, 1, returned, 0))
+    else:
+        driver.send(3001, deal_body(hand))
+        driver.send(3019, observer_body(1, hand))
+        driver.send(3011, field(4, 2, b"") * 4)
+    driver.send(3004, start_body(2))
+    changes = driver.send(3005, play_body(2, 1, [8, 9, 10, 11], remaining=23, combo=8))
+    assert not any(change.kind == "error" for change in changes)
+    obs = driver.engine.latest_observation
+    assert obs.my_seat == obs.current_seat
+    view, facts = project_trusted_replay_facts(obs, subset)
+    declaration = facts.current_winning_declaration.declaration
+    assert declaration.family == "RANK_BOMB" and declaration.comparison_rank == 5
+    assert declaration.length == 4 and view.lead_action.cards == declaration.canonical_cards
+    stored = driver.engine.state.current_winning_declaration
+    assert stored.status.value == "unsupported" and stored.value is None
+    assert subset.drain_decisions() == ()
+
+    for actor in (1, 0, 3):
+        next_actor, reset = _next_after_pass(driver.engine.state, actor)
+        driver.send(3006, pass_body(actor, next_actor, reset=reset))
+    driver.send(3005, play_body(2, 1, [20], remaining=22, combo=1))
+    _, later = project_trusted_replay_facts(driver.engine.latest_observation, subset)
+    assert later.history_declarations[0].declaration == declaration
+    assert later.current_winning_declaration.declaration.family == "SINGLE"
+    assert subset.drain_decisions() == ()
+
+
+LEVEL_CASES = tuple(
+    pytest.param(level, rank_label, id=rank_label)
+    for level, rank_label in enumerate("A23456789TJQK", start=1)
+)
+
+
+@pytest.fixture(scope="module")
+def verified_rules() -> VerifiedGuandanRulesOracle:
+    return VerifiedGuandanRulesOracle(SOURCE)
+
+
+def _moves_follow_rows(hand, rank_label, target):
+    moves = Moves()
+    moves.parse_second_action(hand, 0, rank_label, list(target), None, None)
+    return moves.action_list
+
+
+@pytest.mark.parametrize("level,rank_label", LEVEL_CASES)
+@pytest.mark.parametrize(
+    "size,wild_count,combo_type,kind",
+    [
+        pytest.param(2, 1, 2, "Pair", id="pair-1-wild"),
+        pytest.param(3, 1, 3, "Trips", id="trips-1-wild"),
+        pytest.param(3, 2, 3, "Trips", id="trips-2-wild"),
+        *(
+            pytest.param(size, wild_count, 8 if size <= 5 else 10, "Bomb",
+                         id=f"bomb-{size}-{wild_count}-wild")
+            for wild_count in (1, 2)
+            for size in range(4, 7 + wild_count)
+        ),
+    ],
+)
+def test_danks_equivalent_level_rank_groups_have_the_same_moves_target(
+    verified_rules, level, rank_label, size, wild_count, combo_type, kind,
+):
+    # The two decks supply six non-heart copies of the level rank.
+    natural = (
+        (0x30, "C"), (0x130, "C"), (0x40, "D"), (0x140, "D"), (0x10, "S"), (0x110, "S"),
+    )[:size - wild_count]
+    wilds = ((0x20, "H"), (0x120, "H"))[:wild_count]
+    faces = (*natural[:4], *wilds, *natural[4:])
+    canonical_cards = tuple(prefix | level for prefix, _ in faces)
+    options = verified_rules.observed_play_declarations(
+        reversed(canonical_cards), wire_level=level, combo_type=combo_type, current=None,
+    )
+
+    assert len(options) > 1
+    assert {
+        tuple(wild.substituted for wild in option.wild_assignments) for option in options
+    } == set(product((False, True), repeat=wild_count))
+    assert len({
+        declaration_tokens(ActionDeclaration.from_domain(option), level) for option in options
+    }) == len(options)
+    with pytest.raises(RulesOracleError, match="LIVE_DECLARATION_AMBIGUOUS"):
+        verified_rules.validate_observed_play(
+            canonical_cards, wire_level=level, combo_type=combo_type, current=None,
+        )
+
+    assert len({NormalExchangeLiveSubsetProvider._danks_key(option) for option in options}) == 1
+    expected_target = (kind, rank_label, [f"{suit}{rank_label}" for _, suit in faces])
+
+    lower_rank = "A" if rank_label != "A" else "K"
+    lower_group = [f"{suit}{lower_rank}" for suit in "CCDDHHSS"[:size]]
+    jokers = ["SB", "SB", "HR", "HR"]
+    hand = [*lower_group, *jokers]
+    expected_rows = [["PASS", "PASS", "PASS"], ["FourKings", "R", jokers]]
+    if kind == "Pair":
+        expected_rows.extend([["Pair", "B", ["SB", "SB"]], ["Pair", "R", ["HR", "HR"]]])
+
+    for option in options:
+        assert option.canonical_cards == option.canonical_action_cards == canonical_cards
+        target = declaration_to_follow_target(option)
+        assert target == expected_target
+        assert _moves_follow_rows(hand, rank_label, target) == expected_rows
+
+
+@pytest.mark.parametrize("level,rank_label", LEVEL_CASES)
+def test_danks_keeps_distinct_pair_targets_for_two_heart_level_cards(
+    verified_rules, level, rank_label,
+):
+    options = verified_rules.observed_play_declarations(
+        (0x20 | level, 0x120 | level), wire_level=level, combo_type=2, current=None,
+    )
+    assert {option.comparison_rank for option in options} == set(range(3, 16))
+    assert len({NormalExchangeLiveSubsetProvider._danks_key(option) for option in options}) == 13
+
+    targets = [declaration_to_follow_target(option) for option in options]
+    assert {comparison for _, comparison, _ in targets} == set("A23456789TJQK")
+    hand = [f"C{rank_label}", f"D{rank_label}"]
+    for kind, comparison, cards in targets:
+        assert kind == "Pair" and cards == [f"H{rank_label}"] * 2
+        expected_rows = [["PASS", "PASS", "PASS"]]
+        if comparison != rank_label:
+            expected_rows.append(["Pair", rank_label, hand])
+        assert _moves_follow_rows(hand, rank_label, (kind, comparison, cards)) == expected_rows
+
+
+def test_danks_withholds_distinct_wild_full_house_targets(verified_rules):
+    cards = (0x18, 0x28, 0x19, 0x29, 0x25)
+    options = verified_rules.observed_play_declarations(
+        cards, wire_level=5, combo_type=5, current=None,
+    )
+    assert len(options) == 2
+    assert len({NormalExchangeLiveSubsetProvider._danks_key(option) for option in options}) == 2
+    targets = {option.comparison_rank: declaration_to_follow_target(option) for option in options}
+    assert targets == {
+        8: ("ThreeWithTwo", "8", ["H5", "H8", "S8", "H9", "S9"]),
+        9: ("ThreeWithTwo", "9", ["H5", "H9", "S9", "H8", "S8"]),
+    }
+    hand = ["C9", "C9", "D9", "C3", "D3"]
+    pass_row = ["PASS", "PASS", "PASS"]
+    assert _moves_follow_rows(hand, "5", targets[8]) == [pass_row, ["ThreeWithTwo", "9", hand]]
+    assert _moves_follow_rows(hand, "5", targets[9]) == [pass_row]
+
+    subset, driver = _negative_engine(allow_danks_opening=True)
+    subset.bind_runtime_session("distinct-wild-full-house")
+    play_ids = [wire_card_to_guandan_id(card) for card in cards]
+    observer_hand = [card_id for card_id in range(108) if card_id not in play_ids][:27]
+    driver.send(3001, deal_body(observer_hand))
+    driver.send(3019, observer_body(1, observer_hand))
+    driver.send(3011, field(4, 2, b"") * 4)
+    driver.send(3004, start_body(2))
+    updates = driver.send(3005, play_body(2, 1, play_ids, remaining=22, combo=5))
+
+    assert not any(update.kind == "error" for update in updates)
+    observation = driver.engine.latest_observation
+    assert observation.my_seat == observation.current_seat == 1
+    assert subset.danks_defer_code == "LIVE_DECLARATION_AMBIGUOUS"
+    assert project_trusted_replay_facts(observation, subset) is None
+
+
+def test_follow_target_can_prove_which_wild_full_house_was_played():
+    rules = VerifiedGuandanRulesOracle(SOURCE)
+    cards = (0x18, 0x28, 0x19, 0x29, 0x25)
+    options = rules.declarations(cards, wire_level=5, combo_type=5)
+    assert {value.comparison_rank for value in options} == {8, 9}
+    with pytest.raises(RulesOracleError, match="LIVE_DECLARATION_AMBIGUOUS"):
+        rules.validate_observed_play(cards, wire_level=5, combo_type=5, current=None)
+    previous = rules.unique_declaration((0x38, 0x48, 0x118, 0x17, 0x27),
+                                        wire_level=5, combo_type=5)
+    follow = rules.validate_observed_play(cards, wire_level=5, combo_type=5, current=previous)
+    assert follow.comparison_rank == 9
+
+
+@pytest.mark.parametrize("following", [False, True])
+def test_tencent_wild_straight_uses_the_largest_legal_top(following):
+    rules = VerifiedGuandanRulesOracle(SOURCE)
+    cards = (0x13, 0x34, 0x45, 0x36, 0x2B)
+    assert {d.comparison_rank for d in rules.declarations(
+        cards, wire_level=11, combo_type=4,
+    )} == {6, 7}
+    previous_cards = (0x12, 0x23, 0x24, 0x25, 0x26)
+    previous = (rules.unique_declaration(previous_cards, wire_level=11, combo_type=4)
+                if following else None)
+    choices = rules.observed_play_declarations(
+        cards, wire_level=11, combo_type=4, current=previous, strongest_only=True,
+    )
+    assert len(choices) == 1 and choices[0].comparison_rank == 7
+    assert [wild.assigned_rank for wild in choices[0].wild_assignments] == [7]
+    with pytest.raises(RulesOracleError, match="LIVE_PLAY_DOES_NOT_BEAT"):
+        rules.observed_play_declarations(
+            (0x23, 0x24, 0x25, 0x26, 0x17), wire_level=11,
+            combo_type=4, current=choices[0], strongest_only=True,
+        )
+
+
+def test_tencent_prefers_level_full_house_and_preserves_equal_assignments():
+    rules = VerifiedGuandanRulesOracle(SOURCE)
+    cards = (0x15, 0x35, 0x11, 0x21, 0x25)
+    ordinary = rules.declarations(cards, wire_level=5, combo_type=5)
+    assert {value.comparison_rank for value in ordinary} == {5, 14}
+    decisions = rules.observed_play_declarations(
+        cards, wire_level=5, combo_type=5, current=None, strongest_only=True,
+    )
+    assert len(decisions) == 2
+    assert {value.comparison_rank for value in decisions} == {5}
+    assert {wild.substituted for value in decisions for wild in value.wild_assignments} == {True, False}
+
+
+def test_tencent_strongest_straight_reaches_the_danks_view():
+    subset, driver = _negative_engine(allow_danks_opening=True, strongest_wild_declaration=True)
+    subset.bind_runtime_session("tencent-strongest-straight")
+    cards = (0x13, 0x34, 0x45, 0x36, 0x2B)
+    play_ids = [wire_card_to_guandan_id(code) for code in cards]
+    hand = [card_id for card_id in range(108) if card_id not in play_ids][:27]
+    driver.send(3001, deal_body(hand, level=11))
+    driver.send(3019, observer_body(1, hand))
+    driver.send(3011, field(4, 2, b"") * 4)
+    driver.send(3004, start_body(2))
+    driver.send(3005, play_body(2, 1, play_ids, remaining=22, combo=4))
+    observation = driver.engine.latest_observation
+    assert observation.my_seat == observation.current_seat == 1
+    view, facts = project_trusted_replay_facts(observation, subset)
+    declaration = facts.current_winning_declaration.declaration
+    assert declaration.comparison_rank == 7
+    assert facts.history_declarations[0].declaration == declaration
+    assert view.lead_action.cards == declaration.canonical_cards
+    assert subset.danks_defer_code == ""
 
 
 @pytest.mark.parametrize("case", ["anti_or_skip", "missing_3013", "missing_3015", "transfer_mismatch"])

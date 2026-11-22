@@ -1,0 +1,149 @@
+{
+  "reference_commit": "c618f537c7a83c77b76c3082985e42efff67ec02",
+  "expected_commit": "c618f537c7a83c77b76c3082985e42efff67ec02",
+  "import_rewrite": {
+    "DanKS.": "guance.infrastructure.model.danks_v3.vendor.danks.",
+    "guandan.": "guance.infrastructure.model.danks_v3.vendor.guandan."
+  },
+  "files": [
+    {
+      "source_path": "guandan/engine/types.py",
+      "vendored_path": "src/guance/infrastructure/model/danks_v3/vendor/guandan/engine/types.py",
+      "original_sha256": "8d98ce75d02a7fd9526246f91f0fd5b7d7e4ce79c7a82410c02a16e85f44bf7e",
+      "vendored_sha256": "4ea9a62ad555442e6751bbffd02b6fcdd68545a934a74e2a67ab5219432e5ada"
+    },
+    {
+      "source_path": "guandan/engine/python_rules.py",
+      "vendored_path": "src/guance/infrastructure/model/danks_v3/vendor/guandan/engine/python_rules.py",
+      "original_sha256": "42e0eb1fa3319e019ce6ebe4c9c26728cf083b9343e0f96100bd29cb910d1a2b",
+      "vendored_sha256": "9cf1d49fec489015876a73208dff2dcb501bcb4c347cae43d5fe7727bf8dc77d"
+    },
+    {
+      "source_path": "guandan/engine/moves.py",
+      "vendored_path": "src/guance/infrastructure/model/danks_v3/vendor/guandan/engine/moves.py",
+      "original_sha256": "c74e6568bc4da598efb45b784417ebb554033626e140eaa9abf55fb819f9c85e",
+      "vendored_sha256": "e4afbf0aa06d092cb8d04158d8d2eed34704221721e7a63cffcca7499f94f64f"
+    },
+    {
+      "source_path": "versions/v3/DanKS/retrieval/__init__.py",
+      "vendored_path": "src/guance/infrastructure/model/danks_v3/vendor/danks/retrieval/__init__.py",
+      "original_sha256": "fa6260eb76fede9491327a39395388b8cce0baedfd7fe3a4ff6d2ecb90763ec8",
+      "vendored_sha256": "07bfec5ab9b58b63a375446f551c2fd6ca152f6b0f0a7264a843a2278ec7c329"
+    },
+    {
+      "source_path": "versions/v3/DanKS/retrieval/action_generator.py",
+      "vendored_path": "src/guance/infrastructure/model/danks_v3/vendor/danks/retrieval/action_generator.py",
+      "original_sha256": "e4bcd95145b18995790b0b1e7d8a7573095dfdc7ff6d50d7feb6bfbb1eb5dd82",
+      "vendored_sha256": "207e8f652ee351bd9d973ff0ee8dc537cd546cdf31e024d53de414b0eb8f9cd6"
+    },
+    {
+      "source_path": "versions/v3/DanKS/retrieval/candidate_coverage.py",
+      "vendored_path": "src/guance/infrastructure/model/danks_v3/vendor/danks/retrieval/candidate_coverage.py",
+      "original_sha256": "6f27dfb41d85c0cd4d7be3a553f628daf782e0672522a3cc3134a99ce669be65",
+      "vendored_sha256": "6478d53ff025d47ce0308289fa1ddac3bc65bd7d04079bb7316149eec90eb44e"
+    },
+    {
+      "source_path": "versions/v3/DanKS/retrieval/cards.py",
+      "vendored_path": "src/guance/infrastructure/model/danks_v3/vendor/danks/retrieval/cards.py",
+      "original_sha256": "acfa32fe049ec8efe13330b1b06589f4ef3492cc7b9bee0b7328e4e1f39fc96d",
+      "vendored_sha256": "8f9894c2ec2bee1d6e6bd5e28e32d502c8074e2aaedafeaaa817de2cfc0b0732"
+    },
+    {
+      "source_path": "versions/v3/DanKS/retrieval/card_memory.py",
+      "vendored_path": "src/guance/infrastructure/model/danks_v3/vendor/danks/retrieval/card_memory.py",
+      "original_sha256": "a1931d6ce2dcadbeef841483e1c7376ad763ad6f73836d24d5d0e15880e58170",
+      "vendored_sha256": "5c934fa46cbc14d66da29a0bcd4f3df2319426c93a93c6e0e0073b570fc98676"
+    },
+    {
+      "source_path": "versions/v3/DanKS/retrieval/context.py",
+      "vendored_path": "src/guance/infrastructure/model/danks_v3/vendor/danks/retrieval/context.py",
+      "original_sha256": "2ac46db49438ca77cfed6b945ca45315bf0c04ae961fbf7046f50a0b6bc25bbe",
+      "vendored_sha256": "cd11d65060a774c381ce439740e09121b05a1b6a056a3de4b3e1f53271feaa15"
+    },
+    {
+      "source_path": "versions/v3/DanKS/retrieval/models.py",
+      "vendored_path": "src/guance/infrastructure/model/danks_v3/vendor/danks/retrieval/models.py",
+      "original_sha256": "fc7af525b109cc8b93d7ae7b4806875c4a3ee1e64e59e100431bec4186e7e22d",
+      "vendored_sha256": "11da2282d8486c2a7dc64211fb4ee8a557fc2d604d54113914a24eaaae67dcef"
+    },
+    {
+      "source_path": "versions/v3/DanKS/retrieval/native_actor_core.py",
+      "vendored_path": "src/guance/infrastructure/model/danks_v3/vendor/danks/retrieval/native_actor_core.py",
+      "original_sha256": "32c24fcf8ff6b7d72c607be5c5190b92e9c15cbdcd990ab6f24ebda99047b948",
+      "vendored_sha256": "08f78242e8d75e9e19473c8e5b9baefa29cac812d884db43d3c564f2db9f9e93"
+    },
+    {
+      "source_path": "versions/v3/DanKS/retrieval/native_cover.py",
+      "vendored_path": "src/guance/infrastructure/model/danks_v3/vendor/danks/retrieval/native_cover.py",
+      "original_sha256": "32c24fcf8ff6b7d72c607be5c5190b92e9c15cbdcd990ab6f24ebda99047b948",
+      "vendored_sha256": "899ecc073eef2c6e392741fa03356b357d720cadfa733bc271a1e87465f53c09"
+    },
+    {
+      "source_path": "versions/v3/DanKS/retrieval/partitioner.py",
+      "vendored_path": "src/guance/infrastructure/model/danks_v3/vendor/danks/retrieval/partitioner.py",
+      "original_sha256": "0e89d967e7f746fcf103f3b4dd7c262ddc266bb1226ca7ef07e4c46c464c96b6",
+      "vendored_sha256": "25c255beff49259dd7833714c8a533c1b2394f98cfb1d268f2b991c0967acebb"
+    },
+    {
+      "source_path": "versions/v3/DanKS/retrieval/pressure.py",
+      "vendored_path": "src/guance/infrastructure/model/danks_v3/vendor/danks/retrieval/pressure.py",
+      "original_sha256": "06ced6d738bd2271512b979b735cfb939aac75e08f13bbbcf4145ca4b04b5f81",
+      "vendored_sha256": "37b1ad124b9b043bb1957b27a231133a113818d88e3656b40c62d93fdc483604"
+    },
+    {
+      "source_path": "versions/v3/DanKS/retrieval/ranker.py",
+      "vendored_path": "src/guance/infrastructure/model/danks_v3/vendor/danks/retrieval/ranker.py",
+      "original_sha256": "e47f90e91a8c9ab02c4f470cc33b8c7ae642df0dc5380e8d337a79b22ba8d262",
+      "vendored_sha256": "4628a29039f399762cc93ee9e6898b60df92bf6bc6479b03d7624f8cf963d54f"
+    },
+    {
+      "source_path": "versions/v3/DanKS/retrieval/rules.py",
+      "vendored_path": "src/guance/infrastructure/model/danks_v3/vendor/danks/retrieval/rules.py",
+      "original_sha256": "09f30c52e7188273615e269619e1410ce82b3d51fc729c99abca5cd9f87d0447",
+      "vendored_sha256": "36a7582441b0da07e4c06fce3d84c8251f3073b63cad0fbb5331fc3fa0102c02"
+    },
+    {
+      "source_path": "versions/v3/DanKS/retrieval/scoring.py",
+      "vendored_path": "src/guance/infrastructure/model/danks_v3/vendor/danks/retrieval/scoring.py",
+      "original_sha256": "7dcc99dc74a5f03a620ad4144dc8216b4dbbf034377898f9d67ea8d9e1955d6c",
+      "vendored_sha256": "829bc00531cfa44f3a4e503eaa63a8ce613a7605630ee9947320debb9a833f6d"
+    },
+    {
+      "source_path": "versions/v3/DanKS/retrieval/structural_calibration.py",
+      "vendored_path": "src/guance/infrastructure/model/danks_v3/vendor/danks/retrieval/structural_calibration.py",
+      "original_sha256": "cbd1d4668a2bfe1802419d42bd0c877a5e43fc54b7a4a8a544d31c6c4cd44bbe",
+      "vendored_sha256": "414e0e2e8f2026a8fbe3fba45b998e69d59813ef644e400e18e12ae330ec03f4"
+    },
+    {
+      "source_path": "versions/v3/DanKS/retrieval/tempo.py",
+      "vendored_path": "src/guance/infrastructure/model/danks_v3/vendor/danks/retrieval/tempo.py",
+      "original_sha256": "877e1e006eaf30e97d67b8f8c1119ced76bd71b7ef0b5de2db8519124281fcdc",
+      "vendored_sha256": "b60f5e19204ac2dadcd0aa1e46e0fe9e26c9ebb6b103b8d214693552be0eecff"
+    },
+    {
+      "source_path": "versions/v3/DanKS/training/schema.py",
+      "vendored_path": "src/guance/infrastructure/model/danks_v3/vendor/danks/training/schema.py",
+      "original_sha256": "fd0c84db5cc43578f69f460ff887de7f97a42cb4be28235a6ba2f1e0b3ebbaea",
+      "vendored_sha256": "1b955ad4b12eb59d4873f669907f842e986698b21ebad9777411725d5631aaa3"
+    },
+    {
+      "source_path": "versions/v3/DanKS/training/type_suppression.py",
+      "vendored_path": "src/guance/infrastructure/model/danks_v3/vendor/danks/training/type_suppression.py",
+      "original_sha256": "d355b49091965808dd529cda05e6e58e83eedd24febbbc33fff95b37f63b129d",
+      "vendored_sha256": "ff084662d5a24a0811f18140087365e632275dfbaaa12221eddaf09be21ced6c"
+    },
+    {
+      "source_path": "versions/v3/DanKS/training/featurizer.py",
+      "vendored_path": "src/guance/infrastructure/model/danks_v3/vendor/danks/training/featurizer.py",
+      "original_sha256": "2c8f3b5aa5eaa809bb52d0b538aad1f144f6b877a49512af5dc210584b5134b8",
+      "vendored_sha256": "7a7127d0a5092d84bfdeb56f55b1559a6c7e562448c8192bf9236dd5f60be8cb"
+    },
+    {
+      "source_path": "versions/v3/DanKS/training/model.py",
+      "vendored_path": "src/guance/infrastructure/model/danks_v3/vendor/danks/training/model.py",
+      "original_sha256": "0826af4e049f6d4989b4c650d86e3bbf70aaaba7dab9458ccd40a1f5720144d2",
+      "vendored_sha256": "a2611ca7dd75547df078124a01d82a675da08be603e66dd47f279207e87c355f"
+    }
+  ],
+  "note": "Byte-preserved except import-root rewrites and the trailing provenance comment; native acceleration stays guarded by available() checks and falls back to pure Python."
+}

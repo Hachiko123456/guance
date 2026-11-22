@@ -9,7 +9,7 @@ from typing import Any, Callable, TextIO, TypeVar
 
 from guance.contracts import (
     CanonicalAdviceResult, CanonicalPublicGameView, CONFIRMED_DECISION_RECOMMENDATION_KIND,
-    ModelMetadata, PUBLIC_RECOMMENDATION_KIND, decode_canonical_advice,
+    DeclaredFacts, ModelMetadata, PUBLIC_RECOMMENDATION_KIND, decode_canonical_advice,
     validate_advice_for_view,
 )
 from guance.ports.model import ModelAdvisor, ModelBackendError, public_error
@@ -103,7 +103,9 @@ def run(weights_path: str = "", threads: int = 2, *, requested_device: str = "au
                 if kind == "recommend":
                     request_kind = item.get("request_kind")
                     if request_kind == PUBLIC_RECOMMENDATION_KIND:
-                        if set(item) != base | {"request_kind", "observation"}:
+                        if set(item) not in (base | {"request_kind", "observation"},
+                                             base | {"request_kind", "observation",
+                                                     "declared_facts"}):
                             raise ModelBackendError("PROTOCOL_INVALID")
                     elif request_kind == CONFIRMED_DECISION_RECOMMENDATION_KIND:
                         if (set(item) != base | {"request_kind", "decision"}
@@ -122,11 +124,15 @@ def run(weights_path: str = "", threads: int = 2, *, requested_device: str = "au
                         raise ModelBackendError("PROTOCOL_INVALID")
                     load(item["source"], ids)
                     continue
+                declared_facts = None
                 if kind == "recommend" and item["request_kind"] == PUBLIC_RECOMMENDATION_KIND:
                     view = CanonicalPublicGameView.from_dict(item["observation"])
                     if (view.session_id, view.game_id, view.state_version) != (
                             ids["session_id"], ids["game_id"], ids["state_version"]):
                         raise ModelBackendError("RESPONSE_MISMATCH")
+                    if "declared_facts" in item:
+                        declared_facts = DeclaredFacts.from_dict(item["declared_facts"])
+                        declared_facts.validate_for_view(view)
                 else:
                     decision = item["decision"]
                     decision_key = (decision.get("session_id"), decision.get("game_id"),
@@ -141,10 +147,16 @@ def run(weights_path: str = "", threads: int = 2, *, requested_device: str = "au
                 if advisor is None:
                     raise ModelBackendError("MODEL_NOT_LOADED")
                 if request_kind == PUBLIC_RECOMMENDATION_KIND:
-                    result = _provider_call(lambda: advisor.recommend(view, ids["request_id"]))
+                    if getattr(advisor, "supports_declared_facts", False):
+                        result = _provider_call(lambda: advisor.recommend(
+                            view, ids["request_id"], declared_facts=declared_facts))
+                    else:
+                        # Legacy advisor protocol: never receives the facts member.
+                        result = _provider_call(lambda: advisor.recommend(view, ids["request_id"]))
                     if result.key != view.key or result.request_id != ids["request_id"]:
                         raise ModelBackendError("RESPONSE_MISMATCH")
-                    validate_advice_for_view(view, result)
+                    validate_advice_for_view(view, result,
+                                             declared_facts=declared_facts)
                 else:
                     result = _provider_call(
                         lambda: advisor.recommend_confirmed(decision, ids["request_id"]))

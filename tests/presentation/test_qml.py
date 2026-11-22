@@ -9,7 +9,7 @@ import pytest
 from PySide6.QtCore import QObject, QMetaObject, Qt
 from PySide6.QtQuick import QQuickItem
 from PySide6.QtTest import QTest
-from PySide6.QtGui import QGuiApplication
+from PySide6.QtGui import QFontDatabase, QGuiApplication
 from PySide6.QtWidgets import QApplication
 
 from guance.presentation.app import create_ui
@@ -369,6 +369,130 @@ def _table_fixture(card_count: int = 27) -> dict:
         "card_counter": [{"rank": rank, "total": 4, "played": 1, "in_hand": 0, "unseen": 3, "is_level": rank == 5} for rank in ranks],
         "counter_unseen_total": 45,
     }
+
+
+@pytest.fixture
+def split_ui(qapp: QApplication):
+    font_ids = []
+    if os.name == "nt" and qapp.platformName() == "offscreen":
+        fonts = Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts"
+        for filename in ("msyh.ttc", "msyhbd.ttc", "segoeui.ttf", "seguisym.ttf", "georgia.ttf"):
+            source = fonts / filename
+            if source.is_file():
+                font_ids.append(QFontDatabase.addApplicationFont(str(source)))
+    vm = GuanceViewModel()
+    engine = create_ui(qapp, vm)
+    root = engine.rootObjects()[0]
+    qapp.processEvents()
+    try:
+        yield qapp, engine, root, vm
+    finally:
+        root.hide()
+        qapp.processEvents()
+        for font_id in font_ids:
+            if font_id >= 0:
+                QFontDatabase.removeApplicationFont(font_id)
+
+
+@pytest.mark.parametrize(("layout", "width", "height", "columns"), [
+    ("side", 440, 438, 8),
+    ("side", 520, 545, 8),
+    ("side", 745, 800, 15),
+    ("stacked", 900, 295, 15),
+    ("stacked", 1080, 325, 15),
+    ("stacked", 1360, 350, 15),
+])
+def test_split_exposes_all_game_content_and_counter_colors(split_ui, layout, width, height, columns) -> None:
+    app, _engine, root, vm = split_ui
+    vm.set_split_layout(layout)
+    root.setWidth(width)
+    root.setHeight(height)
+    vm.apply_status({"phase": "ready", "running": True})
+    table = _table_fixture(5)
+    table["hand"] = list(full_deck()[:27])
+    quantities = [0, 1, 2, 3, 4, 5, 8]
+    for item, quantity in zip(table["card_counter"], quantities):
+        item["remaining"] = quantity
+    vm.apply_table_state(table)
+    vm.apply_observation(table)
+    vm.apply_advice({**table, "status": "ready", "candidates": [
+        {"kind": "play", "cards": table["hand"][i:i + 6]} for i in range(5)
+    ]})
+    _settle(app, 80)
+
+    page = _child(root, "assistantPage")
+    counter = _child(root, "mainCardCounter")
+    advice = _child(root, "mainAdvicePanel")
+    content = _child(root, "assistantContent")
+    assert _child(root, "startButton").isVisible()
+    assert counter.y() < advice.mapToItem(content, 0, 0).y()
+    assert _child(counter, "cardCounterGrid").property("columns") == columns
+    colors = [
+        _quick_named(counter, f"cardCounterValue-{rank}").property("color").name()
+        for rank in range(1, 8)
+    ]
+    assert colors[1] == colors[2] and colors[3] == colors[4] and colors[5] == colors[6]
+    assert len(set(colors)) == 4
+    hand = _child(root, "displayHandFlow")
+    assert sum("CardFace" in item.metaObject().className() for item in hand.childItems()) == 27
+    candidates = _child(root, "visibleAdviceCandidates")
+    rows = [item for item in candidates.childItems() if item.objectName().startswith("adviceCandidate-")]
+    assert len(rows) == 5 and all(item.isVisible() for item in rows)
+    for name in ("mainCardCounter", "mainAdvicePanel", "mainHandPanel", "publicGameBoard"):
+        item = _child(root, name)
+        position = item.mapToItem(page, 0, 0)
+        assert position.x() + item.width() <= page.width() + 1
+        assert position.y() + item.height() <= page.height() + 1, name
+
+
+def test_resize_reflows_the_same_live_page_and_centers_counter_rows(split_ui) -> None:
+    app, _engine, root, vm = split_ui
+    table = _table_fixture(6)
+    table["hand"] = list(full_deck()[:27])
+    vm.apply_status({"phase": "ready", "running": True})
+    vm.apply_table_state(table)
+    vm.apply_observation(table)
+    vm.apply_advice({**table, "status": "ready", "candidates": [
+        {"kind": "play", "cards": table["hand"][index:index + 6]} for index in range(5)
+    ]})
+    page = _child(root, "assistantPage")
+    counter = _child(_child(root, "mainCardCounter"), "cardCounterGrid")
+    advice = _child(root, "mainAdvicePanel")
+    board = _child(root, "publicGameBoard")
+    hand = _child(root, "mainHandPanel")
+    alternates = _child(root, "visibleAdviceCandidates")
+
+    for width, height, ranks_per_row, panels_per_row in (
+            (440, 438, 8, 1), (1222, 1278, 15, 2), (900, 295, 15, 3), (440, 438, 8, 1)):
+        root.resize(width, height)
+        _settle(app, 110)
+        assert vm.splitLayout == "side"
+        assert page.property("panelColumns") == panels_per_row
+        assert counter.property("columns") == ranks_per_row
+        rows = {}
+        for cell in counter.childItems():
+            if cell.objectName().startswith("cardCounterCell-"):
+                rows.setdefault(round(cell.y()), []).append(cell)
+        assert sum(map(len, rows.values())) == 15
+        for row in rows.values():
+            left = min(cell.x() for cell in row)
+            right = max(cell.x() + cell.width() for cell in row)
+            assert abs(left - (counter.width() - right)) <= 2
+        cards = [item for item in alternates.childItems() if item.objectName().startswith("adviceCandidate-")]
+        assert len(cards) == 5 and all(item.isVisible() for item in cards)
+        for item in (advice, hand, board):
+            pos = item.mapToItem(page, 0, 0)
+            assert pos.x() + item.width() <= page.width() + 1
+            assert pos.y() + item.height() <= page.height() + 1
+        if panels_per_row == 2:
+            assert abs(advice.width() - board.width()) <= 1
+            assert advice.y() == board.y() and abs(advice.height() - board.height()) <= 1
+
+    vm.apply_table_state({**table, "state_version": 2, "hand": [], "phase": "settled"})
+    vm.apply_status({"phase": "settled", "running": True})
+    _settle(app, 90)
+    assert not hand.isVisible()
+    assert not vm.adviceVisible and counter.isVisible()
 
 
 def test_table_snapshot_renders_counterclockwise_rows_counter_and_wrapped_cards(ui) -> None:

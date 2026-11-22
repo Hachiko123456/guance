@@ -4,12 +4,13 @@ from __future__ import annotations
 import os
 import threading
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
 from guance.contracts import SourceFrame
 from guance.infrastructure.capture.diagnostics import BoundedDiagnostics, redact_text, redact_value
+from guance.infrastructure.capture.proxy_pac import LoopbackPacServer, ProxyRoutingError, build_scoped_routing
 from guance.infrastructure.capture.supervisor import CaptureStartError, SubprocessCaptureSupervisor
 from guance.infrastructure.windows.certificate import WindowsCertificateManager
 from guance.application.runtime.lease import ProxyLease, ProxyLeaseStore, RuntimeInstanceLock
@@ -45,6 +46,7 @@ class RuntimeOptions:
     startup_timeout: float = 8.0
     stop_timeout: float = 3.0
     require_certificate: bool = True
+    scoped_proxy: bool = False
 
     def __post_init__(self) -> None:
         try:
@@ -85,6 +87,18 @@ class RuntimeOptions:
 def _pid_is_alive(pid: int) -> bool:
     if pid <= 0 or pid == os.getpid():
         return pid == os.getpid()
+    if os.name == "nt":
+        from win32api import OpenProcess
+        from win32event import WAIT_TIMEOUT, WaitForSingleObject
+        from pywintypes import error
+        try:
+            handle = OpenProcess(0x00100000, False, pid)  # SYNCHRONIZE
+        except error as exc:
+            return exc.winerror != 87  # ERROR_INVALID_PARAMETER: no such PID
+        try:
+            return WaitForSingleObject(handle, 0) == WAIT_TIMEOUT
+        finally:
+            handle.Close()
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -147,6 +161,8 @@ class RuntimeService:
         self._applied_proxy: ProxySnapshot | None = None
         self._proxy_switched = False
         self._config: CaptureConfig | None = None
+        self._pac: LoopbackPacServer | None = None
+        self._proxy_watch_stop: threading.Event | None = None
         self._last_error: dict[str, Any] | None = None
         self._lease_store = ProxyLeaseStore(self.paths.config_dir / "proxy-lease.json")
         self._instance_lock = RuntimeInstanceLock(self.paths.config_dir / "guance-runtime.lock")
@@ -174,7 +190,8 @@ class RuntimeService:
             certificate = self._inspect_certificate()
             current_proxy: ProxySnapshot | None = None
             try:
-                current_proxy = self._proxy.snapshot()
+                current_proxy = (self._proxy.pac_snapshot() if self.options.scoped_proxy
+                                 else self._proxy.snapshot())
             except Exception as exc:
                 self._record("warning", "proxy_inspect_failed", str(exc))
             config = self._config
@@ -183,7 +200,7 @@ class RuntimeService:
                 "ok": True,
                 "state": self._state,
                 "running": self.running,
-                "mode": self.options.mode.value,
+                "mode": (config.mode if config else self.options.mode).value,
                 "upstream": self._upstream_summary(),
                 "helper": {
                     "path": helper_path.name,
@@ -257,6 +274,18 @@ class RuntimeService:
             self._last_error = result
             self._emit_status(result)
             return result
+        if self._uses_scoped_proxy(lease.original_proxy, lease.applied_proxy):
+            try:
+                restored = self._restore_pac(lease.original_proxy, lease.applied_proxy)
+                if restored:
+                    self._lease_store.append_event("stale_lease_restored", lease)
+                    self._lease_store.clear()
+                    result = {"ok": True, "state": "repaired", "message": "已撤销上次采集的分流规则。"}
+                    self._emit_status(result)
+                    return result
+            except Exception as exc:
+                self._record("warning", "proxy_recovery_failed", type(exc).__name__)
+            return self._error("PROXY_RECOVERY_FAILED", "无法撤销上次采集的分流规则。")
         try:
             current = self._proxy.snapshot()
         except Exception as exc:
@@ -363,8 +392,12 @@ class RuntimeService:
                         )
                     if not config.addon_path.is_file():
                         return self._start_failure("ADDON_NOT_FOUND", "capture addon was not found")
-                original = self._proxy.snapshot()
-                target = build_local_proxy_snapshot(original, config.listen_host, config.listen_port)
+                if self.options.scoped_proxy:
+                    original = self._proxy.pac_snapshot()
+                    config, target = self._prepare_scoped_proxy(config, original)
+                else:
+                    original = self._proxy.snapshot()
+                    target = build_local_proxy_snapshot(original, config.listen_host, config.listen_port)
                 self._original_proxy = original
                 self._applied_proxy = target
                 self._proxy_switched = False
@@ -383,12 +416,19 @@ class RuntimeService:
                 helper_pid = getattr(self._capture, "pid", None)
                 if isinstance(helper_pid, int) and helper_pid > 0:
                     lease = self._lease_store.update_helper_pid(lease, helper_pid)
-                if not self._capture.wait_ready(config.startup_timeout):
+                if not self._capture.wait_ready(config.startup_timeout) or not self.running:
                     return self._start_failure(
                         "HELPER_NOT_READY",
                         "capture helper did not expose its listener",
                     )
-                applied = self._proxy.apply_local(config.listen_host, config.listen_port)
+                if self.options.scoped_proxy:
+                    if not self._proxy.set_pac(target.auto_config_url, expected=original):
+                        return self._start_failure("PROXY_CHANGED", "系统代理已变动，请重新开始采集。")
+                    applied = self._proxy.pac_snapshot()
+                    if applied != target:
+                        return self._start_failure("PROXY_SCOPING_FAILED", "系统未应用完整分流设置。")
+                else:
+                    applied = self._proxy.apply_local(config.listen_host, config.listen_port)
                 if not isinstance(applied, ProxySnapshot):
                     raise RuntimeError("proxy adapter returned an invalid snapshot")
                 self._applied_proxy = applied
@@ -409,6 +449,12 @@ class RuntimeService:
                 self._lease_store.save(active_lease)
                 self._lease_store.append_event("active", active_lease)
                 self._state = "running"
+                if self.options.scoped_proxy:
+                    stop = self._proxy_watch_stop = threading.Event()
+                    threading.Thread(
+                        target=self._watch_scoped_proxy, args=(stop, applied),
+                        name="guance-proxy-watch", daemon=True,
+                    ).start()
                 result = {
                     "ok": True,
                     "state": "running",
@@ -420,6 +466,8 @@ class RuntimeService:
                 return result
             except CaptureStartError as exc:
                 return self._start_failure("HELPER_START_FAILED", str(exc))
+            except ProxyRoutingError as exc:
+                return self._start_failure("PROXY_ROUTING_UNSUPPORTED", str(exc))
             except Exception as exc:
                 return self._start_failure(
                     "START_FAILED",
@@ -431,6 +479,9 @@ class RuntimeService:
             if self._closed and not self.running:
                 return {"ok": True, "state": "closed", "message": "runtime service is closed"}
             self._shutting_down = True
+            if self._proxy_watch_stop is not None:
+                self._proxy_watch_stop.set()
+                self._proxy_watch_stop = None
             proxy_ok = True
             proxy_error = ""
             if self._original_proxy is not None:
@@ -438,11 +489,10 @@ class RuntimeService:
                     lease = self._lease_store.load()
                     if lease is not None:
                         self._lease_store.update_state(lease, "restoring")
-                    proxy_ok = bool(
-                        self._proxy.restore(
-                            self._original_proxy, expected=self._applied_proxy
-                        )
-                    )
+                    if self._uses_scoped_proxy(self._original_proxy, self._applied_proxy):
+                        proxy_ok = self._restore_pac(self._original_proxy, self._applied_proxy)
+                    else:
+                        proxy_ok = self._proxy.restore(self._original_proxy, expected=self._applied_proxy)
                     if not proxy_ok:
                         proxy_error = (
                             "proxy settings changed outside Guance; current settings "
@@ -455,12 +505,11 @@ class RuntimeService:
                     self._record("error", "proxy_restore_failed", proxy_error)
             capture_error = ""
             try:
-                if self.running:
-                    self._capture.stop(self.options.stop_timeout)
+                self._capture.stop(self.options.stop_timeout)
             except Exception as exc:
                 capture_error = f"capture stop failed: {type(exc).__name__}"
                 self._record("error", "capture_stop_failed", capture_error)
-            if proxy_ok:
+            if proxy_ok and self._instance_lock.held:
                 self._original_proxy = None
                 self._applied_proxy = None
                 self._proxy_switched = False
@@ -469,7 +518,7 @@ class RuntimeService:
                 except Exception as exc:
                     proxy_ok = False
                     proxy_error = f"proxy lease cleanup failed: {type(exc).__name__}"
-            else:
+            elif not proxy_ok and self._instance_lock.held:
                 try:
                     lease = self._lease_store.load()
                     if lease is not None:
@@ -477,6 +526,8 @@ class RuntimeService:
                 except Exception:
                     pass
             self._config = None
+            if proxy_ok:
+                self._close_pac()
             self._shutting_down = False
             self._state = (
                 "closed"
@@ -533,6 +584,7 @@ class RuntimeService:
                 self._capture.close() if hasattr(self._capture, "close") else None
             except Exception as exc:
                 self._record("error", "capture_close_failed", type(exc).__name__)
+            self._close_pac()
             self._closed = True
             self._state = "closed"
             self._emit_status({"state": "closed"})
@@ -541,12 +593,10 @@ class RuntimeService:
         helper_path = self.options.helper_path or (
             self.paths.runtime_dir / "mitmproxy" / "mitmdump.exe"
         )
-        addon_path = self.options.addon_path or self._default_addon_path()
-        confdir = self.paths.cert_dir
         return CaptureConfig(
             helper_path=helper_path,
-            addon_path=addon_path,
-            confdir=confdir,
+            addon_path=self.options.addon_path or self._default_addon_path(),
+            confdir=self.paths.cert_dir,
             listen_host=self.options.listen_host,
             listen_port=self.options.listen_port,
             mode=self.options.mode,
@@ -556,6 +606,50 @@ class RuntimeService:
             startup_timeout=self.options.startup_timeout,
             stop_timeout=self.options.stop_timeout,
         )
+
+    def _prepare_scoped_proxy(
+        self, config: CaptureConfig, original: ProxySnapshot,
+    ) -> tuple[CaptureConfig, ProxySnapshot]:
+        if original.auto_config_url or (original.auto_detect and self._proxy.wpad_available()):
+            raise ProxyRoutingError("系统已启用其他代理脚本。为保留原网络配置，采集未启动。")
+        routing = build_scoped_routing(original, config.allowed_hosts, config.listen_host, config.listen_port)
+        mode = CaptureMode.UPSTREAM_HTTP if routing.upstream else CaptureMode.DIRECT
+        config = replace(config, mode=mode, upstream=routing.upstream)
+        self._pac = LoopbackPacServer(routing.script)
+        return config, replace(original, auto_config_url=self._pac.url)
+
+    @staticmethod
+    def _uses_scoped_proxy(original: ProxySnapshot, applied: ProxySnapshot | None) -> bool:
+        return applied is not None and applied.auto_config_url != original.auto_config_url
+
+    def _restore_pac(self, original: ProxySnapshot, applied: ProxySnapshot) -> bool:
+        for _ in range(2):
+            current = self._proxy.pac_snapshot()
+            if current.auto_config_url != applied.auto_config_url:
+                return True
+            if self._proxy.set_pac(original.auto_config_url, expected=current):
+                return self._proxy.pac_snapshot().auto_config_url != applied.auto_config_url
+        return False
+
+    def _watch_scoped_proxy(self, stop: threading.Event, expected: ProxySnapshot) -> None:
+        while not stop.wait(1.0):
+            try:
+                if self._proxy.pac_snapshot() == expected:
+                    continue
+            except OSError:
+                continue
+            with self._lock:
+                if not stop.is_set() and self.stop().get("ok"):
+                    self._emit_status({
+                        "state": "network_settings_changed",
+                        "message": "系统网络设置已变更，采集已停止。",
+                    })
+            return
+
+    def _close_pac(self) -> None:
+        pac, self._pac = self._pac, None
+        if pac is not None:
+            pac.close()
 
     def _default_addon_path(self) -> Path:
         bundled = self.paths.runtime_dir / "mitmproxy" / "addon.py"
@@ -637,7 +731,7 @@ class RuntimeService:
         try:
             result = self.stop()
             if result.get("ok"):
-                self._emit_status({"state": "helper_recovered", "message": "helper exited; proxy restored"})
+                self._emit_status({"state": "helper_recovered", "message": "采集助手已退出，网络已恢复。"})
         finally:
             with self._lock:
                 self._helper_recovery_scheduled = False
@@ -647,13 +741,16 @@ class RuntimeService:
         proxy_ok = True
         if self._original_proxy is not None and self._applied_proxy is not None:
             try:
-                current = self._proxy.snapshot()
-                if current == self._original_proxy:
-                    proxy_ok = True
-                elif current == self._applied_proxy:
-                    proxy_ok = bool(self._proxy.restore(self._original_proxy, expected=self._applied_proxy))
+                if self._uses_scoped_proxy(self._original_proxy, self._applied_proxy):
+                    proxy_ok = self._restore_pac(self._original_proxy, self._applied_proxy)
                 else:
-                    proxy_ok = False
+                    current = self._proxy.snapshot()
+                    if current == self._original_proxy:
+                        proxy_ok = True
+                    elif current == self._applied_proxy:
+                        proxy_ok = self._proxy.restore(self._original_proxy, expected=self._applied_proxy)
+                    else:
+                        proxy_ok = False
             except Exception:
                 proxy_ok = False
         try:
@@ -662,6 +759,7 @@ class RuntimeService:
         except Exception:
             pass
         if proxy_ok:
+            self._close_pac()
             self._original_proxy = None
             self._applied_proxy = None
             self._proxy_switched = False

@@ -14,6 +14,7 @@
 | 组件 | 版本/身份 | 许可证或状态 | 处理 |
 |---|---|---|---|
 | FableDan vendored runtime | commit `7cc5e311b9860bc44f76c082d9c1b21fc8b2d3ec` | `src/guance/infrastructure/model/fabledan_vendor/FABLEDAN_LICENSE`：Apache-2.0 + 非商业附加限制 | 保留许可证与 revision，不改写；仅本地非商业评估 |
+| DanKS V3 Python 推理源码 | commit `c618f537c7a83c77b76c3082985e42efff67ec02` | Apache-2.0 | [许可证](../src/guance/infrastructure/model/danks_v3/vendor/LICENSE)、[上游声明](../src/guance/infrastructure/model/danks_v3/vendor/NOTICE)、[V3 声明](../src/guance/infrastructure/model/danks_v3/vendor/NOTICE-V3)和[来源校验](../src/guance/infrastructure/model/danks_v3/vendor/vendor_manifest.json) |
 | Python | 3.12.0 x64 | Python Software Foundation License | 随 onedir 的 Python runtime 保留 PSF 许可 |
 | NumPy | 2.3.5 | BSD-3-Clause | 随包；保留版权与许可文本 |
 | PySide6 / shiboken6 | 6.11.1 | Qt for Python；LGPLv3/GPLv3/商业许可 | **待确认**：再分发需保留通知与可重新链接义务 |

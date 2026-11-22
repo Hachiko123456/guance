@@ -257,7 +257,8 @@ class Block(importlib.abc.MetaPathFinder):
 sys.meta_path.insert(0, Block())
 from guance.infrastructure.model.registry import default_registry
 registry = default_registry()
-assert set(registry._providers) == {'fabledan', 'guandan', 'builtin.guandan', 'guandan_marvel_v2'}
+# Phase 4 DanKS V3 integration added the danks_v3 provider family.
+assert set(registry._providers) == {'fabledan', 'guandan', 'builtin.guandan', 'guandan_marvel_v2', 'danks_v3'}
 assert not any(name in sys.modules for name in ('torch', 'guandan_marvel', 'nanopokerlib'))
 assert 'guance.infrastructure.model.marvel_v2.runtime' not in sys.modules
 assert 'guance.infrastructure.model.marvel_v2.deployment_bundle' not in sys.modules

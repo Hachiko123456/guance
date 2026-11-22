@@ -4,6 +4,8 @@ from __future__ import annotations
 import argparse
 from collections import defaultdict
 import hashlib
+from hashlib import sha256 as _sha256_file_hash
+from pathlib import PurePosixPath
 import importlib.metadata as metadata
 import json
 import os
@@ -26,6 +28,7 @@ REQUIRED_QT = {
     "Qt6Quick.dll", "Qt6OpenGL.dll", "Qt6QuickControls2.dll",
 }
 REQUIRED_CRT = {"msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll"}
+_TORCH_RUNTIME_PACKAGES = ("torch", "torchgen", "sympy", "mpmath")
 FORBIDDEN_SUFFIXES = {".pt", ".pth", ".ckpt", ".pem", ".key", ".jsonl", ".har", ".pcap"}
 FORBIDDEN_COMPONENTS = {"tests", "private_data", "logs", "captures", "certificates", "preferences"}
 FORBIDDEN_FILENAMES = {"python314.dll", "checkpoint_identity.json", "evaluation_games.jsonl"}
@@ -133,6 +136,41 @@ def package_metadata(name: str) -> dict[str, str]:
         return {"name": name, "version": "missing", "license_expression": "", "license": "", "home_page": ""}
 
 
+def _is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.is_relative_to(root)
+        return path.is_relative_to(root)
+    except (ValueError, OSError):
+        return False
+
+
+def _declared_bundle_files(package: Path) -> set[str]:
+    """Bundle files whose identity the packaged SHA256SUMS/manifest declares.
+
+    A file counts only when its packaged bundle validates: manifest identity
+    plus SHA256SUMS coverage with matching hashes.  These are declared model
+    payloads, not undeclared sensitive files; they still receive the full
+    sensitive-byte scan.
+    """
+    declared: set[str] = set()
+    for sums_path in package.glob("_internal/data/models/**/SHA256SUMS"):
+        bundle = sums_path.parent
+        try:
+            entries = {}
+            for line in sums_path.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                digest, name = line.split(maxsplit=1)
+                entries[name.lstrip("*")] = digest
+            for relative, digest in entries.items():
+                target = bundle / Path(*PurePosixPath(relative).parts)
+                if target.is_file() and _sha256_file_hash(target.read_bytes()).hexdigest() == digest:
+                    declared.add(target.relative_to(package).as_posix())
+        except (OSError, ValueError):
+            continue
+    return declared
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--package-root", type=Path, required=True)
@@ -230,10 +268,25 @@ def main() -> int:
 
     forbidden_paths = []
     sensitive_hits = []
+    declared_payload_roots = tuple(
+        Path("_internal") / name / "site-packages"
+        for name in ("marvel_runtime", "danks_runtime")
+    ) + tuple(Path("_internal") / name for name in _TORCH_RUNTIME_PACKAGES)
+    declared_model_files = _declared_bundle_files(package)
     for path in files:
         relative = path.relative_to(package)
         parts = {part.lower() for part in relative.parts}
-        if path.suffix.lower() in FORBIDDEN_SUFFIXES or parts & FORBIDDEN_COMPONENTS or path.name.lower() in FORBIDDEN_FILENAMES:
+        declared_model = relative.as_posix() in declared_model_files
+        vendored_wheel = any(_is_relative_to(relative, root) for root in declared_payload_roots)
+        # Declared model payloads (bundle-validated weights/manifests) and
+        # vendored third-party wheel trees ship on purpose; their test
+        # directories and weights are still byte-scanned below.  Everything
+        # else keeps the full strict path rules.
+        flagged_parts = parts - ({"tests"} if vendored_wheel else set())
+        suffix_forbidden = (path.suffix.lower() in FORBIDDEN_SUFFIXES
+                            and not (declared_model and path.suffix.lower() == ".pt"))
+        if (suffix_forbidden or flagged_parts & FORBIDDEN_COMPONENTS
+                or path.name.lower() in FORBIDDEN_FILENAMES):
             forbidden_paths.append(relative.as_posix())
         try:
             data = path.read_bytes()
@@ -247,11 +300,19 @@ def main() -> int:
         for marker in markers:
             if marker.lower() in data.lower():
                 sensitive_hits.append({"path": relative.as_posix(), "marker": marker.decode(errors="replace")})
+    declared_weight_count = sum(
+        1 for path in files
+        if path.relative_to(package).as_posix() in declared_model_files
+        and path.suffix.lower() == ".pt")
     privacy_report = {
         "schema": "guance-phase8-package-privacy-v1", "candidate": args.candidate,
         "forbidden_paths": sorted(forbidden_paths), "sensitive_hits": sensitive_hits,
         "python314_present": bool(by_name.get("python314.dll")),
-        "checkpoint_present": any(path.suffix.lower() in {".pt", ".pth", ".ckpt"} for path in files),
+        "checkpoint_present": any(
+            path.suffix.lower() in {".pt", ".pth", ".ckpt"}
+            and path.relative_to(package).as_posix() not in declared_model_files
+            for path in files),
+        "declared_model_weights": declared_weight_count,
         "capture_helper_present": bool(by_name.get("mitmdump.exe")),
         "capture_helper_policy": "excluded from this evaluation-only candidate because its independent Python 3.14 runtime violates the CPython 3.12 closure gate",
         "external_marvel_packaged": False,

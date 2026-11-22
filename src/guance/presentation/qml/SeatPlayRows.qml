@@ -5,9 +5,12 @@ Item {
     id: rowsRoot
     property var rows: []
     property bool compact: false
+    property bool inlineCards: false
+    property int inlineColumns: 1
+    property bool seatTiles: false
     property int cardSpacing: compact ? 1 : 5
     property int rowPadding: compact ? 6 : 10
-    readonly property int columns: compact && width >= 480 ? 2 : 1
+    readonly property int columns: inlineCards ? inlineColumns : compact && width >= 480 ? 2 : 1
     implicitWidth: 0
     implicitHeight: rowsGrid.implicitHeight
 
@@ -19,7 +22,8 @@ Item {
         anchors.top: parent.top
         columns: rowsRoot.columns
         columnSpacing: 8
-        rowSpacing: compact ? 6 : 8
+        rowSpacing: rowsRoot.seatTiles ? columnSpacing : rowsRoot.inlineCards ? 2 : compact ? 6 : 8
+        uniformCellHeights: rowsRoot.seatTiles
         uniformCellWidths: true
 
         Repeater {
@@ -29,23 +33,27 @@ Item {
                 objectName: "seatPlayRow-" + modelData.seat
                 Layout.fillWidth: true
                 Layout.preferredWidth: 1
+                Layout.fillHeight: rowsRoot.seatTiles
                 Layout.alignment: Qt.AlignTop
                 implicitHeight: seatRowContent.implicitHeight + rowsRoot.rowPadding * 2
                 radius: 6
                 color: modelData.active ? Theme.accentSoft : Theme.inset
                 border.color: modelData.active ? Theme.accent : Theme.line
 
-                ColumnLayout {
+                GridLayout {
                     id: seatRowContent
                     anchors.left: parent.left
                     anchors.right: parent.right
                     anchors.top: parent.top
                     anchors.margins: rowsRoot.rowPadding
-                    spacing: compact ? 3 : 5
+                    columns: rowsRoot.inlineCards && !rowsRoot.seatTiles ? 2 : 1
+                    rowSpacing: compact ? 3 : 5
+                    columnSpacing: 3
 
                     RowLayout {
-                        Layout.fillWidth: true
-                        spacing: 6
+                        Layout.fillWidth: seatRowContent.columns === 1
+                        Layout.preferredWidth: seatRowContent.columns === 2 ? 94 : -1
+                        spacing: rowsRoot.inlineCards ? 2 : 6
                         Rectangle {
                             objectName: "finishRankBadge-" + modelData.seat
                             visible: (typeof modelData.finishRankLabel === "string")
@@ -54,7 +62,7 @@ Item {
                                          || modelData.finishRank === 2
                                          || modelData.finishRank === 3
                                          || modelData.finishRank === 4)
-                            implicitWidth: compact ? 34 : 42
+                            implicitWidth: rowsRoot.inlineCards ? 25 : compact ? 34 : 42
                             implicitHeight: compact ? 20 : 24
                             radius: 6
                             color: modelData.finishRank === 1 ? "#F4D27A" : (modelData.finishRank === 2 ? "#D6DEE8" : (modelData.finishRank === 3 ? "#D9A06D" : Theme.inset))
@@ -74,7 +82,7 @@ Item {
                             visible: typeof modelData.arrow === "string" && modelData.arrow !== ""
                             color: Theme.accent
                             font.family: Theme.family
-                            font.pixelSize: compact ? 10 : 12
+                            font.pixelSize: rowsRoot.seatTiles ? 13 : compact ? 10 : 12
                             font.bold: true
                         }
                         Text {
@@ -82,16 +90,16 @@ Item {
                             text: modelData.name
                             color: Theme.ink
                             font.family: Theme.family
-                            font.pixelSize: compact ? 10 : 12
+                            font.pixelSize: rowsRoot.seatTiles ? 13 : compact ? 10 : 12
                             font.bold: true
                             Layout.fillWidth: true
                             elide: Text.ElideRight
                         }
                         Text {
-                            text: modelData.count + " 张" + (modelData.active ? " · 当前" : "")
+                            text: modelData.count + " 张" + (modelData.active && !rowsRoot.inlineCards ? " · 当前" : "")
                             color: modelData.active ? Theme.accent : (modelData.count <= 3 ? Theme.danger : Theme.muted)
                             font.family: Theme.family
-                            font.pixelSize: compact ? 10 : 11
+                            font.pixelSize: rowsRoot.seatTiles ? 12 : compact ? 10 : 11
                             font.bold: modelData.active
                         }
                     }
@@ -99,7 +107,6 @@ Item {
                     Flow {
                         objectName: "seatPlayFlow-" + modelData.seat
                         Layout.fillWidth: true
-                        width: parent.width
                         spacing: rowsRoot.cardSpacing
                         clip: false
                         Repeater {
@@ -109,6 +116,8 @@ Item {
                                 cardData: modelData
                                 mini: rowsRoot.compact
                                 publicPlay: rowsRoot.compact
+                                displayWidth: rowsRoot.seatTiles ? 23 : rowsRoot.inlineCards ? 16 : 0
+                                displayHeight: rowsRoot.seatTiles ? 30 : rowsRoot.inlineCards ? 20 : 0
                             }
                         }
                         Text {
@@ -117,7 +126,7 @@ Item {
                             color: modelData.kind === "pass" ? Theme.amber : Theme.faint
                             font.family: Theme.family
                             font.pixelSize: rowsRoot.compact ? 10 : 11
-                            height: rowsRoot.compact ? 24 : 30
+                            height: rowsRoot.inlineCards ? 20 : rowsRoot.compact ? 24 : 30
                             verticalAlignment: Text.AlignVCenter
                         }
                     }

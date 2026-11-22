@@ -28,18 +28,25 @@ env/
 /release_local/
 /runtime/local/
 /runtime/mitmproxy/
+/runtime/.mitmproxy-runtime.json
+*.exe
+*.dll
+*.msi
 
 # Local logs, recordings, proxy leases and preferences
 /logs/*
 !/logs/.gitkeep
 /debug/captures/
 /private_data/
+*.log
 *.mitm
 *.pcap
 *.pcapng
 *.dmp
 proxy-lease.json
+proxy-lease.journal.jsonl
 preferences.json
+active_model.json
 
 # Certificate material and secrets, including packaged key stores
 *.pem
@@ -52,6 +59,7 @@ preferences.json
 *.secret
 
 # Local model assets (not model documentation)
+/data/models/
 *.npz
 *.pt
 *.pth
@@ -65,8 +73,20 @@ preferences.json
 .vscode/
 /.workbuddy/
 /.codex/
+/.claude/
+/.opencode/
+/CLAUDE.md
+/opencode.json
 /docs/agent/
 /pythonProject/
+
+# Local prototypes, implementation notes and shell output
+/prototypes/auto-training-data/
+/docs/acceptance/TOP10_SELECTOR_V3_EXECUTION_PLAN.md
+/docs/acceptance/TOP10_SELECTOR_V3_INTEGRATION_ASSESSMENT.md
+/docs/acceptance/TOP10_SELECTOR_V3_PHASE1_SPEC.md
+/docs/acceptance/TOP10_SELECTOR_V3_PROMPTS.md
+/=810
 
 # OS metadata
 .DS_Store

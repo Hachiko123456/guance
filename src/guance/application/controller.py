@@ -29,8 +29,9 @@ from guance.contracts import (
 from guance.domain.session import AggregateParser, SessionEngine
 from guance.diagnostics import DiagnosticLog
 from guance.application.model_service import ModelService
+from guance.application.trusted_replay import project_trusted_replay_facts
 from guance.application.runtime.service import RuntimeOptions
-from guance.ports.capture import CaptureMode, ProxySnapshot, RuntimePaths, UpstreamProxy
+from guance.ports.capture import RuntimePaths
 from guance.ports.model import ActiveSelectionDTO, ModelBackendError, ModelCatalogPort, ModelClientFactory
 
 # Test/embedding compatibility hook; production supplies factories from bootstrap.
@@ -390,12 +391,12 @@ class GuanceController:
                  runtime_factory: Callable[..., Any] | None = None,
                  diagnostics_factory: Callable[[], Any] | None = None,
                  training_recorder_factory: Callable[..., Any] | None = None,
-                 proxy_snapshot_factory: Callable[[], ProxySnapshot] | None = None,
                  certificate_inspector: Callable[[Path], Any] | None = None,
                  live_subset_provider: Any | None = None,
                  canonical_converter_factory: Callable[[Path, str], Any] | None = None,
                  confirmed_decision_projector: Callable[..., Any] | None = None,
-                 catalog: ModelCatalogPort | None = None):
+                 catalog: ModelCatalogPort | None = None,
+                 initial_packaged_model: Path | None = None):
         self.viewmodel = viewmodel
         self.paths = paths or app_paths()
         ensure_app_paths(self.paths)
@@ -408,7 +409,6 @@ class GuanceController:
         self._runtime_factory = runtime_factory
         self._diagnostics_factory = diagnostics_factory
         self._training_recorder_factory = training_recorder_factory
-        self._proxy_snapshot_factory = proxy_snapshot_factory
         self._certificate_inspector = certificate_inspector
         self._canonical_converter_factory = canonical_converter_factory
         self._decision_projector = confirmed_decision_projector
@@ -444,6 +444,11 @@ class GuanceController:
         self._pending_model_observation = None
         self._pending_model_generation: int | None = None
         self._pending_confirmed_key: tuple[str, str, int] | None = None
+        # Replay-recommendation scheduling (V2): identities already submitted
+        # (one advice per confirmed turn, ever) and turns awaiting a trusted
+        # confirmation that arrived after their observation update.
+        self._advice_submitted: set[tuple[str, str, int]] = set()
+        self._advice_pending: dict[tuple[str, str, int], int | None] = {}
         self._primary_engine_error: dict[str, Any] | None = None
         self._engine_error_repeats = 0
         self._model_selection_lock = threading.RLock()
@@ -464,7 +469,7 @@ class GuanceController:
         if self._selection_failed:
             self._requested_source = self.preferences.get('requested_model_path', '')
         else:
-            resolved = self._resolve_startup_source()
+            resolved = self._resolve_startup_source(initial_packaged_model)
             if self._selection_failed:
                 # Tampered/broken active selection: fail-closed latch, explicit retry only.
                 self._requested_source = ""
@@ -475,6 +480,8 @@ class GuanceController:
                 self._requested_source = resolved
         self._persisted_source = self.preferences.get('model_path', '')
         self._create_model_service()
+        if hasattr(self.viewmodel, "set_split_layout"):
+            self.viewmodel.set_split_layout(self.preferences.get("split_layout", "side"))
         self._attach_signals()
         self._refresh_catalog_ui()
         self.viewmodel.set_debug_capture_enabled(
@@ -484,8 +491,8 @@ class GuanceController:
         if isinstance(saved_layout, dict):
             self.viewmodel.restore_floating_layout(saved_layout)
 
-    def _resolve_startup_source(self) -> Path | None:
-        """Resolve the explicit startup selection; never an implicit default or fallback."""
+    def _resolve_startup_source(self, initial_packaged_model: Path | None) -> Path | None:
+        """Honor the explicit selection before using the full package's initial model."""
         override = os.environ.get("GUANCE_MODEL_BUNDLE") or os.environ.get("GUANCE_MODEL_PATH")
         if isinstance(override, str) and override.strip():
             return Path(override)
@@ -515,7 +522,7 @@ class GuanceController:
                 if not self._migrate_legacy_selection(legacy.strip()):
                     return None
                 return Path(legacy.strip())
-            return None
+            return initial_packaged_model
         if document.kind == "catalog":
             try:
                 source = self._catalog.resolve_bundle(document.model_id, document.bundle)
@@ -622,6 +629,8 @@ class GuanceController:
         self.viewmodel.openDiagnosticsDirectoryRequested.connect(self.open_export_directory)
         self.viewmodel.openCaptureDirectoryRequested.connect(self.open_capture_directory)
         self.viewmodel.floatingLayoutSaveRequested.connect(self.save_floating_layout)
+        if hasattr(self.viewmodel, "splitLayoutSaveRequested"):
+            self.viewmodel.splitLayoutSaveRequested.connect(self.save_split_layout)
         self.viewmodel.confirmSeatRequested.connect(self.confirm_seat)
         self.viewmodel.modelImportRequested.connect(self.import_model)
         self.viewmodel.debugCaptureRequested.connect(self.set_debug_capture_enabled)
@@ -662,6 +671,17 @@ class GuanceController:
             )
             for update in updates:
                 self._handle_update(update)
+
+    def save_split_layout(self, layout: str) -> None:
+        if layout not in ("side", "stacked"):
+            return
+        with self._lock:
+            self.preferences["split_layout"] = layout
+            try:
+                save_preferences(self.paths, self.preferences)
+            except OSError:
+                self.viewmodel.append_log({"level": "ERROR", "code": "SPLIT_LAYOUT_SAVE_FAILED",
+                                           "message": "分屏布局保存失败。"})
 
     def save_floating_layout(self, layout: dict[str, Any]) -> None:
         """Persist a bounded sidecar layout without affecting runtime state."""
@@ -761,6 +781,10 @@ class GuanceController:
         self._pending_model_observation = None
         self._pending_model_generation = None
         self._latest_model_observation = None
+        # Pending deferred confirmations die with the recommendation state;
+        # submitted identities stay, so an already-answered turn is never
+        # answered twice even after a reset.
+        self._advice_pending.clear()
 
     def _clear_pending_model_requests(self) -> None:
         """Clear every stale/pending recommendation identity (never partially)."""
@@ -940,25 +964,8 @@ class GuanceController:
                 helper = Path(r"C:\Program Files\mitmproxy\bin\mitmdump.exe")
             if not addon.is_file():
                 addon = Path(__file__).resolve().parents[1] / "infrastructure" / "capture" / "addon.py"
-        proxy = (self._proxy_snapshot_factory() if self._proxy_snapshot_factory is not None
-                 else ProxySnapshot(enabled=False))
-        upstream = None
-        mode = CaptureMode.DIRECT
-        if proxy.enabled and proxy.server:
-            server = proxy.server.split(";", 1)[0]
-            if "=" in server:
-                server = server.split("=", 1)[1]
-            if ":" in server:
-                host, port_text = server.rsplit(":", 1)
-                try:
-                    port = int(port_text)
-                except ValueError:
-                    port = 0
-                if port:
-                    upstream = UpstreamProxy(kind="mixed", host=host.strip("[]"), port=port)
-                    mode = CaptureMode.UPSTREAM_MIXED
         return RuntimeOptions(
-            mode=mode, upstream=upstream, helper_path=helper, addon_path=addon,
+            helper_path=helper, addon_path=addon, scoped_proxy=True,
             allowed_hosts=("hlxyxws.huanle.qq.com", "hlsjwshall.huanle.qq.com",
                            "long.wxagame.weixin.qq.com", "guandangamelog.huanle.qq.com"),
             require_certificate=True,
@@ -1128,7 +1135,7 @@ class GuanceController:
     def stop(self) -> None:
         self._run_async("stop", self._stop_impl)
 
-    def _stop_impl(self) -> None:
+    def _stop_impl(self, recovery_message: str = "") -> None:
         with self._lock:
             self._selection_generation += 1
             generation = self._selection_generation
@@ -1137,8 +1144,7 @@ class GuanceController:
                 self._selection_failed = True
             self._active_advice_key = None
         self.viewmodel.set_model_selection_generation(generation)
-        if self._runtime is not None:
-            self._runtime.stop()
+        result = self._runtime.stop() if self._runtime is not None else {"ok": True}
         with self._lock:
             self._training_stopped = True
             self._close_debug_recorder()
@@ -1155,7 +1161,15 @@ class GuanceController:
             self._model.invalidate()
         self._model.close()
         self._close_training_recorder()
-        self._status({"phase":"stopped","running":False,"connected":False,"busy":False})
+        status = {"running": False, "connected": False, "busy": False}
+        if result.get("ok"):
+            status.update(phase="stopped", error_message="", error_code="")
+            if recovery_message:
+                status.update(detail=recovery_message)
+        else:
+            status.update(phase="error", error_code=result.get("error_code", "CAPTURE_STOP_FAILED"),
+                          error_message=result.get("message", "停止采集或恢复网络失败"))
+        self._status(status)
 
     def _run_async(self, operation: str, callback, *args) -> None:
         if not self._operation_lock.acquire(blocking=False):
@@ -1253,7 +1267,10 @@ class GuanceController:
 
         Recommendation submission never depends on debug-capture recording:
         the canonical capture converter only records evidence when enabled.
+        Deferred trusted confirmations are flushed first (they can arrive on
+        a frame without an observation update).
         """
+        self._flush_deferred_advice()
         for decision in self._live_subset.drain_decisions():
             if self._canonical_converter is not None:
                 try:
@@ -1828,15 +1845,212 @@ class GuanceController:
             elif (eligible and not getattr(self, '_selection_failed', False)
                   and not getattr(self, '_no_selection', False)):
                 self._active_advice_key = observation.key
-                self._status({'phase': 'thinking', 'connected': True, 'running': True})
                 if self._marvel_confirmed_active():
+                    self._status({'phase': 'thinking', 'connected': True, 'running': True})
                     # Single-path MARVEL turn: the matching confirmed decision is
                     # submitted from this frame's decision drain; never a second
                     # public-view request for the same turn.
                     with self._lock:
                         self._pending_confirmed_key = observation.key
                 else:
-                    self._model.submit(observation)
+                    self._submit_public_advice(observation)
+
+    def _declared_facts_consumer_active(self) -> bool:
+        """True when the ready model consumes declared facts (DanKS family)."""
+        model = self._model
+        if not isinstance(model, ModelService) or model.status.get("model_status") != "ready":
+            return False
+        metadata = dict(model.status.metadata)
+        return metadata.get("provider") == "danks_v3"
+
+    def _submit_public_advice(self, observation) -> None:
+        """Public-view submission with verified facts when trusted replay confirms.
+
+        The DanKS family reaches the model through the trusted-replay
+        projection: the provider's confirmed public state for this exact turn
+        is verified item by item and only the verified facts are projected
+        (normalized canonical card order).  One submission per turn identity,
+        ever: a repeated observation update or a duplicate confirmation for an
+        already-submitted turn never re-submits.
+
+        Without a verified match the evidence is INSUFFICIENT: clear the
+        current advice, record the reason, and register the turn for a
+        deferred confirmation (the trusted decision may arrive on a later
+        frame).  No ineligible request is submitted and nothing latches - the
+        model keeps handling later positions.  Real model failures keep the
+        original status handling.  Non-DanKS families keep the verbatim
+        submission behavior unchanged.
+        """
+        key = observation.key
+        if key in self._advice_submitted:
+            return  # already answered once; duplicates never re-submit
+        budget = 6.0 if observation.free_lead else 2.0
+        if self._declared_facts_consumer_active():
+            verified = project_trusted_replay_facts(observation, self._live_subset)
+            if verified is not None:
+                self._submit_danks_advice(observation, verified, budget)
+                return
+            if key not in self._advice_pending:
+                self._advice_pending[key] = int(getattr(observation, "state_version", 0))
+                self._record_advice_deferred(observation)
+            return
+        if isinstance(self._model, ModelService) and self._model.selected_provider == "danks_v3":
+            self._advice_pending[key] = None
+            self.viewmodel.clear_advice("DanKS 正在加载，已记录当前回合。")
+            return
+        self._status({"phase": "thinking", "connected": True, "running": True})
+        self._model.submit(observation,
+                           declared_facts=self._declared_facts_for(observation),
+                           budget_seconds=budget)
+
+    def _submit_danks_advice(self, observation, verified, budget: float) -> None:
+        self._advice_submitted.add(observation.key)
+        self._advice_pending.pop(observation.key, None)
+        self._status({"phase": "thinking", "connected": True, "running": True})
+        self.log.write("advice_submitted", game_id=observation.game_id,
+                       state_version=observation.state_version)
+        view, facts = verified
+        self._model.submit(view, declared_facts=facts, budget_seconds=budget)
+
+    def _record_advice_deferred(self, observation) -> None:
+        """Clear the displayed advice and record why it was withheld."""
+        code = getattr(self._live_subset, "danks_defer_code", "")
+        reason = {
+            "LIVE_DECLARATION_AMBIGUOUS": "本局有出牌的牌型无法唯一确认，建议暂缓。",
+            "LIVE_PLAY_DOES_NOT_BEAT": "本局有出牌与已确认的压制关系冲突，建议暂缓。",
+        }.get(code, "本回合公开证据不足，正在等待确认。")
+        self.viewmodel.clear_advice(reason)
+        self.log.write(
+            "advice_deferred_insufficient_evidence",
+            message=reason,
+            game_id=observation.game_id,
+            state_version=observation.state_version,
+            error_code=code,
+        )
+
+    def _turn_still_eligible(self, observation) -> bool:
+        """Mirror the observation-update gate for a deferred confirmation."""
+        table_matches = (
+            self._table_game_key is None
+            or self._table_game_key[1] == observation.game_id
+        )
+        seat_confirmed = (
+            observation.my_seat in range(4)
+            and (self._table_game_key is None or self._table_seat_confirmed)
+        )
+        return (not self.session.paused and table_matches and seat_confirmed
+                and observation.current_seat == observation.my_seat)
+
+    def _flush_deferred_advice(self) -> None:
+        """Submit pending turns exactly once when their confirmation arrives.
+
+        Runs every frame before the decision drain: a trusted confirmation
+        queued on a later frame than the observation update (no observation
+        update fires for it) still produces exactly one advice, provided the
+        turn is still the observer's and the advice key is still active.
+        Expired turns (state moved on, no longer my seat, or no longer the
+        active advice key) are dropped WITHOUT advice; duplicate
+        confirmations for already-submitted identities never re-submit.
+        """
+        if not self._advice_pending or not self._declared_facts_consumer_active():
+            return
+        latest = self._latest_model_observation
+        latest_game = latest.game_id if latest is not None else None
+        for key, version in list(self._advice_pending.items()):
+            if latest_game is not None and key[1] != latest_game:
+                # A previous game ended while its turn was pending.
+                self._advice_pending.pop(key, None)
+                continue
+            if (latest is None or latest.key != key
+                    or not self._turn_still_eligible(latest)
+                    or self._active_advice_key != key
+                    or key in self._advice_submitted):
+                self._advice_pending.pop(key, None)
+                continue
+            verified = project_trusted_replay_facts(latest, self._live_subset)
+            if verified is None:
+                if version is None:
+                    self._advice_pending[key] = latest.state_version
+                    self._record_advice_deferred(latest)
+                continue  # confirmation not arrived yet; keep waiting
+            budget = 6.0 if latest.free_lead else 2.0
+            self._submit_danks_advice(latest, verified, budget)
+        # Housekeeping: submitted identities of finished games are never
+        # revisited; drop them so the set stays bounded.
+        if latest_game is not None:
+            self._advice_submitted = {key for key in self._advice_submitted
+                                      if key[1] == latest_game}
+
+    def _declared_facts_for(self, observation) -> 'DeclaredFacts | None':
+        """Declaration facts from the session state for the pending view.
+
+        The state's own current_winning_declaration Knowledge is projected
+        verbatim (known/absent/unsupported/unknown); nothing is inferred from
+        zero/False, and a missing or foreign state yields no facts so the
+        provider applies its own eligibility gate.
+        """
+        from guance.contracts import (CurrentWinningDeclarationFact,
+                                      DECLARED_FACTS_SCHEMA, DeclaredFacts)
+        from guance.domain.state import GameState
+        state = self.session.state
+        if not isinstance(state, GameState) or                 state.game_id != observation.game_id:
+            return None
+        winning = state.current_winning_declaration
+        if winning is None:
+            status = 'absent' if observation.free_lead else 'unsupported'
+            fact = CurrentWinningDeclarationFact(
+                status=status,
+                reason='' if status == 'absent' else 'live_declaration_unverified')
+        elif winning.status.value == 'known':
+            fact = CurrentWinningDeclarationFact(status='known',
+                                                 declaration=winning.value)
+        elif winning.status.value == 'absent':
+            fact = CurrentWinningDeclarationFact(status='absent')
+        else:
+            fact = CurrentWinningDeclarationFact(status=winning.status.value,
+                                                 reason=winning.reason)
+        # History provenance is projected verbatim from the state machine; the
+        # machine keeps it unsupported for everything it can observe today
+        # (phase 1 finding), so live states stay ineligible until an upstream
+        # evidence source exists.
+        try:
+            v2 = state.public_state_v2(self.session.session_id)
+            history = v2.history
+            transport_status = history.transport_contiguous.status.value
+            transport_value = (history.transport_contiguous.value
+                               if history.transport_contiguous.status.value == 'known'
+                               else None)
+            complete_status = history.public_history_complete.status.value
+            complete_value = (history.public_history_complete.value
+                              if history.public_history_complete.status.value == 'known'
+                              else None)
+        except Exception:
+            transport_status, transport_value = 'unsupported', None
+            complete_status, complete_value = 'unsupported', None
+        # Project index-aligned history declarations from the state machine's
+        # committed actions (verbatim: known declarations carry the full
+        # PublicDeclaration; passes are absent; unsupported stays explicit).
+        from guance.contracts import ActionDeclarationFact
+        history_declarations = []
+        for order, action in enumerate(state.committed_actions_v2, 1):
+            decl = action.declaration
+            if decl.status.value == 'known':
+                history_declarations.append(ActionDeclarationFact(
+                    index=order, status='known', declaration=decl.value))
+            elif decl.status.value == 'absent':
+                history_declarations.append(ActionDeclarationFact(
+                    index=order, status='absent'))
+            else:
+                history_declarations.append(ActionDeclarationFact(
+                    index=order, status=decl.status.value, reason=decl.reason))
+        return DeclaredFacts(schema=DECLARED_FACTS_SCHEMA,
+                             current_winning_declaration=fact,
+                             history_declarations=history_declarations,
+                             history_origin='live_capture',
+                             transport_contiguous=transport_status,
+                             public_history_complete=complete_status,
+                             history_complete_value=complete_value,
+                             transport_value=transport_value)
 
     def _on_advice(self, result: CanonicalAdviceResult | dict, *, generation: int | None = None) -> None:
         if generation is not None and (generation != self._selection_generation or self._selection_failed):
@@ -1856,17 +2070,31 @@ class GuanceController:
                 return
             if generation is not None and generation != self._selection_generation:
                 return
-        if generation is not None:
-            payload = self._model_ui_payload(wire, generation)
-            if payload is None:
-                return
-            wire = payload
-        self.viewmodel.apply_advice(wire)
-        data = {'phase': 'ready', 'connected': True, 'running': True}
-        if generation is None:
-            self._status(data)
-        else:
-            self._model_ui(data, generation)
+            if generation is not None:
+                wire = self._model_ui_payload(wire, generation)
+                if wire is None:
+                    return
+            if wire.get("provider") == "danks_v3" and wire.get("status") != "ready":
+                messages = {
+                    "MODEL_TIMEOUT": "本回合推理超时，等待下一回合。",
+                    "MODEL_WORKER_EXITED": "DanKS 进程已退出，下个本人回合会重新启动模型。",
+                    "MODEL_INFERENCE_FAILED": "DanKS 本回合计算失败，下个本人回合会继续计算。",
+                    "MODEL_OUTPUT_INVALID": "本回合候选格式或牌面不合法，等待下一回合。",
+                    "MODEL_OUTPUT_NOT_BEATING": "本回合候选未通过牌型校验，下个本人回合会继续计算。",
+                    "MODEL_OUTPUT_AMBIGUOUS": "本回合牌型有歧义，下个本人回合会重新检查。",
+                }
+                wire = {**wire, "error_message": messages.get(
+                    wire.get("error_code"), "本回合牌型或公开历史无法确认，建议暂缓。",
+                )}
+            self.viewmodel.apply_advice(wire)
+            data = {'phase': 'ready', 'connected': True, 'running': True}
+            if generation is None:
+                self._status(data)
+            else:
+                self._model_ui(data, generation)
+        if wire.get("provider") == "danks_v3":
+            self.log.write("advice_result", game_id=key[1], state_version=key[2],
+                           result_status=wire.get("status", ""), error_code=wire.get("error_code", ""))
 
     @staticmethod
     def _model_summary(metadata: dict[str, Any], state: str) -> str:
@@ -1890,6 +2118,8 @@ class GuanceController:
         return " / ".join(parts) + "（" + state + "）"
 
     def _on_model_status(self, status: ModelStatusSnapshot | dict, *, generation: int | None = None) -> None:
+        if status.get("event") == "stale_advice_dropped":
+            return
         state = status.get("model_status")
         error_code = status.get("error_code", "")
         no_selection_event = state == "unavailable" and error_code == "MODEL_NOT_SELECTED"
@@ -1934,7 +2164,12 @@ class GuanceController:
             if generation is not None and getattr(self.viewmodel, "_phase", "") == "error":
                 ready.update({"phase": "waiting", "detail": "模型已就绪，等待当前局面。"})
             publish(ready)
+            with self._lock:
+                if self._advice_pending:
+                    self._flush_deferred_advice()
         elif state in {"error", "unavailable", "timeout"}:
+            self.log.write("model_lifecycle_failed", level="ERROR", model_state=state,
+                           error_code=error_code)
             self._clear_pending_model_requests()
             if generation is None and hasattr(self, '_model'):
                 self._model.invalidate()
@@ -1961,6 +2196,8 @@ class GuanceController:
                           "model_summary": "正在加载本地模型" if state == "loading" else "尚未加载模型"})
 
     def _on_runtime_status(self, status: dict) -> None:
+        if status.get("state") in {"helper_recovered", "network_settings_changed"}:
+            self._run_async("runtime-recovery", self._stop_impl, str(status.get("message", "")))
         if status.get("state") in {"error","stop_error"}:
             self._training_invalidate("capture_error")
             self._model.invalidate()

@@ -1,0 +1,216 @@
+{
+  "level": 5,
+  "observer_hand": [
+    26,
+    42,
+    58,
+    19,
+    35,
+    310,
+    323,
+    316,
+    306,
+    41,
+    290,
+    282,
+    308,
+    24,
+    309,
+    332,
+    281,
+    298,
+    77,
+    56,
+    305,
+    44,
+    28,
+    15,
+    321,
+    297,
+    23
+  ],
+  "observer_hand_danks_labels": [
+    "ST",
+    "HT",
+    "CT",
+    "S3",
+    "H3",
+    "C6",
+    "D3",
+    "CQ",
+    "C2",
+    "H9",
+    "H2",
+    "ST",
+    "C4",
+    "S8",
+    "C5",
+    "DQ",
+    "S9",
+    "HT",
+    "DK",
+    "C8",
+    "CA",
+    "HQ",
+    "SQ",
+    "HR",
+    "DA",
+    "H9",
+    "S7"
+  ],
+  "opponent_physical_cards": [
+    53,
+    69,
+    37,
+    57,
+    73
+  ],
+  "controlled_variables": "deal, start seat, actor, physical opponent cards, observer hand, remaining counts and state version",
+  "varied_variable": "confirmed complete declaration only",
+  "cases": {
+    "confirmed_triple_five_pair_nine": {
+      "confirmed_declaration": {
+        "declaration_schema": "guandan-declaration-v1",
+        "rank_encoding": "guandan-rank-v1",
+        "declaration_ruleset": "GD-RULES-0.1",
+        "rules_semantic_sha256": "96b1fdccf795af4e51361e8bd155d5e46c663d50ea1d1dda22a3a6021ce663dc",
+        "family": "FULL_HOUSE",
+        "declared_ranks": [
+          5,
+          9
+        ],
+        "comparison_rank": 5,
+        "suit": null,
+        "length": 5,
+        "protocol_length": null,
+        "canonical_cards": [
+          53,
+          69,
+          37,
+          57,
+          73
+        ],
+        "canonical_action_cards": [
+          53,
+          69,
+          37,
+          57,
+          73
+        ],
+        "wild_assignments": [
+          {
+            "physical_card": 37,
+            "assigned_rank": 5,
+            "assigned_suit": "HEARTS",
+            "substituted": false
+          }
+        ]
+      },
+      "comparison_rank": 5,
+      "engine_follow_target": {
+        "kind": "ThreeWithTwo",
+        "rank": "5",
+        "cards": [
+          "C5",
+          "D5",
+          "H5",
+          "C9",
+          "D9"
+        ]
+      },
+      "legal_action_count": 5,
+      "observer_fixed_action": {
+        "kind": "ThreeWithTwo",
+        "rank": "T",
+        "cards": [
+          "CT",
+          "H3",
+          "HT",
+          "S3",
+          "ST"
+        ]
+      },
+      "observer_action_in_legal_list": false,
+      "state_version": 4,
+      "remaining": [
+        22,
+        27,
+        27,
+        27
+      ]
+    },
+    "confirmed_triple_nine_pair_five": {
+      "confirmed_declaration": {
+        "declaration_schema": "guandan-declaration-v1",
+        "rank_encoding": "guandan-rank-v1",
+        "declaration_ruleset": "GD-RULES-0.1",
+        "rules_semantic_sha256": "96b1fdccf795af4e51361e8bd155d5e46c663d50ea1d1dda22a3a6021ce663dc",
+        "family": "FULL_HOUSE",
+        "declared_ranks": [
+          9,
+          5
+        ],
+        "comparison_rank": 9,
+        "suit": null,
+        "length": 5,
+        "protocol_length": null,
+        "canonical_cards": [
+          53,
+          69,
+          37,
+          57,
+          73
+        ],
+        "canonical_action_cards": [
+          37,
+          57,
+          73,
+          53,
+          69
+        ],
+        "wild_assignments": [
+          {
+            "physical_card": 37,
+            "assigned_rank": 9,
+            "assigned_suit": "CLUBS",
+            "substituted": true
+          }
+        ]
+      },
+      "comparison_rank": 9,
+      "engine_follow_target": {
+        "kind": "ThreeWithTwo",
+        "rank": "9",
+        "cards": [
+          "H5",
+          "C9",
+          "D9",
+          "C5",
+          "D5"
+        ]
+      },
+      "legal_action_count": 127,
+      "observer_fixed_action": {
+        "kind": "ThreeWithTwo",
+        "rank": "T",
+        "cards": [
+          "CT",
+          "H3",
+          "HT",
+          "S3",
+          "ST"
+        ]
+      },
+      "observer_action_in_legal_list": true,
+      "state_version": 4,
+      "remaining": [
+        22,
+        27,
+        27,
+        27
+      ]
+    }
+  },
+  "assertion_point": "complete legal candidate list formation (second_actions), before ranker ranking, Top10 truncation and model inference",
+  "engine_input_rejection": "empty engine lists are rejected before rank()"
+}

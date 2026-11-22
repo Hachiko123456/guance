@@ -56,7 +56,11 @@ class DiagnosticLog:
                      'level':level,'event':event,'message':message,**fields})
         with self._lock:
             self.recent.append(item)
-            self._logger.log(getattr(logging,level.upper(),logging.INFO),json.dumps(item,ensure_ascii=False))
+            try:
+                self._logger.log(getattr(logging,level.upper(),logging.INFO),json.dumps(item,ensure_ascii=False))
+            except OSError:
+                # Retain the in-memory event even when writing diagnostics fails.
+                pass
         return item
 
     def export(self, destination: Path, *, status: dict[str,Any]|None=None) -> Path:

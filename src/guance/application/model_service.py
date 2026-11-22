@@ -9,13 +9,15 @@ from typing import Any
 from guance.contracts import (
     CanonicalAdviceResult, CanonicalPublicGameView, ConfirmedDecisionRecommendationRequest,
     GameObservation, ModelContractError, ModelLifecycleState, ModelRecommendationRequest,
-    ModelStatusSnapshot, PublicRecommendationRequest, RequestIdentity,
+    DeclaredFacts, ModelStatusSnapshot, PublicRecommendationRequest,
+    PublicRecommendationRequestV2, RequestIdentity,
     decode_canonical_advice,
 )
 from guance.ports.model import (
-    MODEL_MESSAGES, ModelBackendError, ModelClient, ModelClientFactory, ModelSource,
+    DANKS_REQUEST_FAILURES, MODEL_MESSAGES, ModelBackendError, ModelClient, ModelClientFactory, ModelSource,
     ResultCallback, StatusCallback, public_error, unavailable_client_factory,
 )
+from .advice_metrics import AdviceMetricsRecorder, _identity_from_tuple
 
 
 class ModelService:
@@ -30,7 +32,8 @@ class ModelService:
                  on_result: ResultCallback | None = None, on_status: StatusCallback | None = None,
                  client_factory: ModelClientFactory | None = None,
                  timeout_seconds: float = 2.0, threads: int = 2,
-                 requested_device: str = "auto") -> None:
+                 requested_device: str = "auto",
+                 metrics: 'AdviceMetricsRecorder | None' = None) -> None:
         if requested_device not in ("auto", "cpu", "cuda"):
             raise ModelBackendError("MODEL_INPUT_INVALID")
         self._on_result = on_result or (lambda result: None)
@@ -52,6 +55,9 @@ class ModelService:
         self._submission_token = 0
         self._pending_submission: int | None = None
         self._early_result: tuple[int, CanonicalAdviceResult] | None = None
+        self._metrics = metrics
+        self._generation = 0
+        self._last_metrics_identity: tuple | None = None
         self._status = ModelStatusSnapshot(state=ModelLifecycleState.UNAVAILABLE,
             error_code='MODEL_NOT_LOADED', message=MODEL_MESSAGES['MODEL_NOT_LOADED'])
         if source is not None:
@@ -66,6 +72,11 @@ class ModelService:
     def selected_source(self) -> Path | None:
         with self._lock:
             return self._source
+
+    @property
+    def selected_provider(self) -> str:
+        with self._lock:
+            return str(getattr(self._client, "selected_provider", ""))
 
     @property
     def requested_source(self) -> ModelSource | None:
@@ -191,10 +202,19 @@ class ModelService:
                 return
             if parsed.request_id != self._latest_request_id:
                 return
-            invalid = parsed.status != 'ready' or bool(parsed.error_message) or bool(parsed.error_code)
+            turn_failure = (
+                self._status.metadata.provider == parsed.provider == "danks_v3"
+                and parsed.status == "unavailable" and parsed.error_code in DANKS_REQUEST_FAILURES
+                and not parsed.candidates
+            )
+            invalid = not turn_failure and (
+                parsed.status != 'ready' or bool(parsed.error_message) or bool(parsed.error_code)
+            )
         if invalid:
             self.fail_selection('MODEL_OUTPUT_INVALID', epoch=epoch)
             return
+        if parsed.status == "ready" and self._metrics is not None and self._last_metrics_identity is not None:
+            self._metrics.record_visible(_identity_from_tuple(self._last_metrics_identity))
         self._on_result(parsed)
 
     def _select(self, source: ModelSource, *, start: bool) -> None:
@@ -202,6 +222,7 @@ class ModelService:
             if self._closed:
                 raise ModelBackendError('MODEL_CLOSED')
             self._epoch += 1
+            self._generation += 1
             epoch = self._epoch
             self._selection_failed = False
             self._requested_source = source
@@ -264,7 +285,10 @@ class ModelService:
         finally:
             self._calls.release()
 
-    def submit(self, observation: GameObservation | CanonicalPublicGameView) -> None:
+    def submit(self, observation: GameObservation | CanonicalPublicGameView,
+               *, declared_facts: 'DeclaredFacts | None' = None,
+               metrics_sample_id: str | None = None,
+               budget_seconds: float | None = None) -> None:
         try:
             view = (CanonicalPublicGameView.from_observation(observation)
                     if isinstance(observation, GameObservation) else observation)
@@ -272,9 +296,21 @@ class ModelService:
         except Exception as exc:
             self.fail_selection(public_error(exc, 'MODEL_INPUT_INVALID')['error_code'])
             return
-        request = PublicRecommendationRequest(
-            RequestIdentity("", view.session_id, view.game_id, view.state_version), view)
-        self._submit_request(request, timeout_seconds=None)
+        if self._metrics is not None and metrics_sample_id:
+            # Upstream should-recommend confirmation: pre-register the sample
+            # (denominator unit) before any submit; repeats merge by id.
+            self._metrics.register_sample(
+                metrics_sample_id,
+                state_tag=f"{view.game_id}:{view.state_version}",
+                model_tag=str(self._source))
+        identity = RequestIdentity("", view.session_id, view.game_id, view.state_version)
+        if declared_facts is None:
+            request = PublicRecommendationRequest(identity, view)
+        else:
+            request = PublicRecommendationRequestV2(identity, view, declared_facts)
+            request.validate()
+        self._submit_request(request, timeout_seconds=budget_seconds,
+                             metrics_sample_id=metrics_sample_id)
 
     def submit_confirmed(self, decision: Mapping[str, Any], *,
                          timeout_seconds: float | None = None) -> None:
@@ -298,7 +334,8 @@ class ModelService:
         self._submit_request(request, timeout_seconds=timeout_seconds)
 
     def _submit_request(self, request: ModelRecommendationRequest, *,
-                        timeout_seconds: float | None) -> None:
+                        timeout_seconds: float | None,
+                        metrics_sample_id: str | None = None) -> None:
         with self._lock:
             if self._closed:
                 return
@@ -331,6 +368,24 @@ class ModelService:
                 request_id = client.submit(request, timeout_seconds=timeout_seconds)
             finally:
                 self._calls.release()
+            if self._metrics is not None:
+                if isinstance(request_id, str) and request_id:
+                    self._last_metrics_identity = (
+                        request_id, request.identity.session_id,
+                        request.identity.game_id, request.identity.state_version,
+                        self._epoch, self._generation)
+                    self._metrics.record_attempt(_identity_from_tuple(
+                        self._last_metrics_identity),
+                        sample_id=metrics_sample_id)
+                else:
+                    # Rejected submission (client returned None): the attempt is
+                    # still recorded so the sample keeps its failure evidence.
+                    self._metrics.record_attempt(_identity_from_tuple((
+                        f"rejected-{self._submission_token}",
+                        request.identity.session_id, request.identity.game_id,
+                        request.identity.state_version, self._epoch,
+                        self._generation)), outcome="rejected_none",
+                        sample_id=metrics_sample_id)
             early = None
             with self._lock:
                 if epoch == self._epoch and self._pending_submission == token:

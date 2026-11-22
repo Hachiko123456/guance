@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import ctypes
 import os
-from dataclasses import dataclass
+from ctypes import wintypes
+from dataclasses import dataclass, replace
 from typing import Any, Protocol
 
 from guance.ports.capture import PlatformUnavailableError, ProxySnapshot
@@ -85,6 +86,40 @@ class WindowsProxyBackend:
             accessor.refresh()
         return True
 
+    def pac_snapshot(self) -> ProxySnapshot:
+        if self._registry is not None:
+            return self._registry.read_proxy()
+        return _WinInetPac().snapshot()
+
+    def set_pac(self, url: str, *, expected: ProxySnapshot) -> bool:
+        if self._registry is not None:
+            return self.restore(replace(expected, auto_config_url=url), expected=expected)
+        adapter = _WinInetPac()
+        if adapter.snapshot() != expected:
+            return False
+        adapter.set_url(url)
+        if self._refresh_enabled:
+            adapter.refresh()
+        return True
+
+    def wpad_available(self) -> bool:
+        if self._registry is not None:
+            return False
+        if os.name != "nt":
+            raise PlatformUnavailableError("Windows automatic proxy discovery is unavailable")
+        winhttp = ctypes.WinDLL("winhttp", use_last_error=True)
+        detect = winhttp.WinHttpDetectAutoProxyConfigUrl
+        detect.argtypes = (wintypes.DWORD, ctypes.POINTER(ctypes.c_void_p))
+        detect.restype = wintypes.BOOL
+        address = ctypes.c_void_p()
+        if detect(3, ctypes.byref(address)):  # DHCP and DNS discovery
+            _global_free(address)
+            return True
+        error = ctypes.get_last_error()
+        if error == 12180:  # ERROR_WINHTTP_AUTODETECTION_FAILED
+            return False
+        raise ctypes.WinError(error)
+
     def _accessor(self) -> RegistryAccessor:
         if self._registry is not None:
             return self._registry
@@ -156,6 +191,96 @@ class _WinregAccessor:
             raise OSError("Internet Settings did not refresh the proxy change")
 
 
+class _OptionValue(ctypes.Union):
+    _fields_ = [("number", wintypes.DWORD), ("string", ctypes.c_void_p),
+                ("filetime", wintypes.FILETIME)]
+
+
+class _ConnectionOption(ctypes.Structure):
+    _fields_ = [("kind", wintypes.DWORD), ("value", _OptionValue)]
+
+
+class _ConnectionOptions(ctypes.Structure):
+    _fields_ = [("size", wintypes.DWORD), ("connection", wintypes.LPWSTR),
+                ("count", wintypes.DWORD), ("error", wintypes.DWORD),
+                ("options", ctypes.POINTER(_ConnectionOption))]
+
+
+def _global_free(pointer: int | ctypes.c_void_p) -> None:
+    free = ctypes.WinDLL("kernel32").GlobalFree
+    free.argtypes = (ctypes.c_void_p,)
+    free.restype = ctypes.c_void_p
+    free(pointer)
+
+
+class _WinInetPac:
+    """Use WinINet's LAN settings API, including the actual PAC/WPAD flags."""
+
+    _PER_CONNECTION = 75
+    _FLAGS = 1
+    _FLAGS_UI = 10
+    _SERVER = 2
+    _BYPASS = 3
+    _PAC_URL = 4
+    _MANUAL = 2
+    _PAC = 4
+    _WPAD = 8
+
+    def __init__(self) -> None:
+        if os.name != "nt":
+            raise PlatformUnavailableError("Windows proxy settings are unavailable")
+        library = ctypes.WinDLL("wininet", use_last_error=True)
+        self._query = library.InternetQueryOptionW
+        self._query.argtypes = (
+            ctypes.c_void_p, wintypes.DWORD, ctypes.c_void_p, ctypes.POINTER(wintypes.DWORD)
+        )
+        self._query.restype = wintypes.BOOL
+        self._set = library.InternetSetOptionW
+        self._set.argtypes = (ctypes.c_void_p, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD)
+        self._set.restype = wintypes.BOOL
+
+    @staticmethod
+    def _options(*kinds: int):
+        values = (_ConnectionOption * len(kinds))()
+        for value, kind in zip(values, kinds):
+            value.kind = kind
+        return values, _ConnectionOptions(ctypes.sizeof(_ConnectionOptions), None, len(kinds), 0, values)
+
+    def _read(self) -> tuple[int, str, str, str]:
+        values, options = self._options(self._FLAGS_UI, self._SERVER, self._BYPASS, self._PAC_URL)
+        size = wintypes.DWORD(options.size)
+        try:
+            if not self._query(None, self._PER_CONNECTION, ctypes.byref(options), ctypes.byref(size)):
+                raise ctypes.WinError(ctypes.get_last_error())
+            strings = [ctypes.wstring_at(value.value.string) if value.value.string else ""
+                       for value in values[1:]]
+            return values[0].value.number, *strings
+        finally:
+            for value in values[1:]:
+                if value.value.string:
+                    _global_free(value.value.string)
+
+    def snapshot(self) -> ProxySnapshot:
+        flags, server, bypass, url = self._read()
+        if flags & self._PAC and not url:
+            raise OSError("Active automatic proxy has no URL")
+        return ProxySnapshot(bool(flags & self._MANUAL), server, url, bool(flags & self._WPAD), bypass)
+
+    def set_url(self, url: str) -> None:
+        flags, _, _, _ = self._read()
+        values, options = self._options(self._FLAGS, self._PAC_URL)
+        values[0].value.number = (flags | self._PAC) if url else (flags & ~self._PAC)
+        text = ctypes.create_unicode_buffer(url)
+        values[1].value.string = ctypes.cast(text, ctypes.c_void_p).value
+        if not self._set(None, self._PER_CONNECTION, ctypes.byref(options), options.size):
+            raise ctypes.WinError(ctypes.get_last_error())
+
+    def refresh(self) -> None:
+        for option in (95, 39, 37):  # proxy settings changed, settings changed, refresh
+            if not self._set(None, option, None, 0):
+                raise ctypes.WinError(ctypes.get_last_error())
+
+
 @dataclass
 class InMemoryProxyBackend:
     """Small deterministic fake useful for runtime tests and examples."""
@@ -165,6 +290,15 @@ class InMemoryProxyBackend:
 
     def snapshot(self) -> ProxySnapshot:
         return self.current
+
+    def pac_snapshot(self) -> ProxySnapshot:
+        return self.current
+
+    def set_pac(self, url: str, *, expected: ProxySnapshot) -> bool:
+        return self.restore(replace(expected, auto_config_url=url), expected=expected)
+
+    def wpad_available(self) -> bool:
+        return False
 
     def apply_local(self, host: str, port: int) -> ProxySnapshot:
         self.current = ProxySnapshot(

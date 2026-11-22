@@ -1,0 +1,3 @@
+# Preserve the exact bytes used to verify vendored sources and frozen fixtures.
+/src/guance/infrastructure/model/danks_v3/vendor/** -text whitespace=cr-at-eol
+/tests/fixtures/danks_v3/** -text whitespace=cr-at-eol

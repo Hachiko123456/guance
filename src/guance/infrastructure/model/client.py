@@ -11,11 +11,15 @@ import time
 import uuid
 from typing import Any
 
-from guance.contracts import (CanonicalAdviceResult, CanonicalPublicGameView, GameObservation,
+from guance.contracts import (CanonicalAdviceResult, CanonicalPublicGameView, GameObservation, ModelContractError,
                                ConfirmedDecisionRecommendationRequest, ModelRecommendationRequest,
                                ModelStatusSnapshot, PublicRecommendationRequest, RequestIdentity,
                                recommendation_request_kind, validate_advice_for_view)
-from guance.ports.model import ModelBackendError, ModelSource, ResultCallback, StatusCallback, public_error
+from guance.infrastructure.windows.worker_job import create_worker_job
+from guance.ports.model import (
+    DANKS_REQUEST_FAILURES, MODEL_MESSAGES, ModelBackendError, ModelSource, ResultCallback,
+    StatusCallback, public_error,
+)
 from .codec import IDENTITY_FIELDS, dumps, envelope, read_message, safe_metadata
 from .manifest import MAX_MANIFEST_BYTES, sha256_file, strict_json
 from .marvel_v2.decision_request import parse_confirmed_decision
@@ -100,6 +104,7 @@ class InferenceClient:
         self._responses: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=16)
         self._stop = threading.Event()
         self._process: subprocess.Popen[str] | None = None
+        self._worker_job = None
         self._thread: threading.Thread | None = None
         self._latest_key: tuple[str, str, int] | None = None
         self._latest_identity: dict[str, Any] | None = None
@@ -137,7 +142,15 @@ class InferenceClient:
                 self.invalidate()
                 self._notify_status({"model_status": "error", **public_error(exc, "MODEL_INPUT_INVALID")})
                 return None
-            request = PublicRecommendationRequest(request.identity, view)
+            declared_facts = getattr(request, "declared_facts", None)
+            if declared_facts is not None:
+                from guance.contracts import (DeclaredFacts,
+                                              PublicRecommendationRequestV2)
+                request = PublicRecommendationRequestV2(
+                    request.identity, view,
+                    DeclaredFacts.from_dict(declared_facts.to_dict()))
+            else:
+                request = PublicRecommendationRequest(request.identity, view)
         else:
             # Strict client-side DTO rejection before the payload can reach the wire.
             parse_confirmed_decision(request.decision)
@@ -211,6 +224,8 @@ class InferenceClient:
     def _launch(self) -> bool:
         if self._stop.is_set():
             return False
+        # Retire the previous worker's process tree before starting a new one.
+        self._terminate()
         loading_metadata = ({"bundle_fingerprint": self.source_fingerprint}
                             if self.source_fingerprint else {})
         self._notify_status({"model_status": "loading", "message": "正在加载本地模型",
@@ -229,6 +244,9 @@ class InferenceClient:
                     stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="strict",
                     bufsize=1, env=env, creationflags=flags)
                 self._process = process
+                if os.name == "nt" and self.selected_provider == "danks_v3":
+                    # The worker waits for the load request before starting its pool.
+                    self._worker_job = create_worker_job(process.pid)
 
             def read() -> None:
                 try:
@@ -283,6 +301,8 @@ class InferenceClient:
                 if (self.source_fingerprint
                         and metadata.get("bundle_fingerprint") != self.source_fingerprint):
                     raise ModelBackendError("RESPONSE_MISMATCH")
+                if self.selected_provider == "danks_v3" and metadata.get("provider") != "danks_v3":
+                    raise ModelBackendError("RESPONSE_MISMATCH")
                 self._loaded_metadata = metadata
                 loaded_status = str(metadata.get("status", "loaded"))
                 self._model_available = loaded_status in {"loaded", "ready"}
@@ -308,6 +328,22 @@ class InferenceClient:
             self._terminate()
             return False
 
+    def _deliver_danks_failure(self, ids: dict[str, Any], code: str) -> bool:
+        metadata = self._loaded_metadata
+        if metadata.get("provider") != "danks_v3" or code not in DANKS_REQUEST_FAILURES:
+            return False
+        with self._lock:
+            current = ids == self._latest_identity and not self._closed
+        if current:
+            self.on_result(CanonicalAdviceResult(
+                ids["session_id"], ids["game_id"], ids["state_version"], ids["request_id"],
+                status="unavailable", error_code=code, error_message=MODEL_MESSAGES[code],
+                provider="danks_v3", model_version=metadata["model_version"],
+                score_kind=metadata["score_kind"],
+                model_fingerprint=metadata.get("model_sha256", ""),
+            ))
+        return True
+
     def _run(self) -> None:
         try:
             with self._lock:
@@ -320,6 +356,9 @@ class InferenceClient:
                 try:
                     pending = self._requests.get(timeout=0.2)
                 except queue.Empty:
+                    process = self._process
+                    if process is not None and process.poll() is not None:
+                        self._terminate()
                     continue
                 if pending is None:
                     break
@@ -335,6 +374,9 @@ class InferenceClient:
                     if self._process is None or self._process.poll() is not None:
                         if not self._launch():
                             continue
+                        with self._lock:
+                            if ids != self._latest_identity or self._closed:
+                                continue
                     if not self._model_available:
                         self._notify_status({"model_status": "unavailable",
                             "error_code": "GUANDAN_STATE_UNAVAILABLE",
@@ -344,44 +386,77 @@ class InferenceClient:
                     kind = recommendation_request_kind(request)
                     if kind == "public":
                         body = {"request_kind": kind, "observation": request.view.to_dict()}
+                        declared_facts = getattr(request, "declared_facts", None)
+                        if declared_facts is not None:
+                            body["declared_facts"] = declared_facts.to_dict()
                     else:
                         body = {"request_kind": kind, "decision": dict(request.decision)}
                     self._send(envelope("recommend", ids, **body))
                     started = time.monotonic()
                     reply = self._responses.get(timeout=request_timeout)
+                    if reply.get("type") == "exited":
+                        raise ModelBackendError("MODEL_WORKER_EXITED")
+                    if reply.get("type") == "reader_error":
+                        raise ModelBackendError("PROTOCOL_INVALID")
                     if any(reply.get(name) != ids[name] for name in IDENTITY_FIELDS):
                         raise ModelBackendError("RESPONSE_MISMATCH")
                     if reply.get("type") == "error":
-                        raise ModelBackendError(reply.get("error_code", "MODEL_INFERENCE_FAILED"))
+                        code = str(reply.get("error_code", "MODEL_INFERENCE_FAILED"))
+                        if reply.get("fatal") is False and self._deliver_danks_failure(ids, code):
+                            continue
+                        raise ModelBackendError(code)
                     if reply.get("type") != "result":
                         raise ModelBackendError("PROTOCOL_INVALID")
                     from guance.contracts import decode_canonical_advice
                     result = decode_canonical_advice(reply.get("result"))
                     if result.key != request.identity.key or result.request_id != ids["request_id"]:
                         raise ModelBackendError("RESPONSE_MISMATCH")
-                    if kind == "public":
-                        validate_advice_for_view(request.view, result)
-                    else:
-                        result.to_dict()
+                    metadata = self._loaded_metadata
+                    if metadata.get("provider") == "danks_v3" and (
+                        result.provider != "danks_v3"
+                        or result.model_version != metadata.get("model_version")
+                        or result.score_kind != metadata.get("score_kind")
+                        or result.model_fingerprint != metadata.get("model_sha256", "")
+                    ):
+                        raise ModelBackendError("RESPONSE_MISMATCH")
                     if (result.status != "ready" or result.error_code or result.error_message):
                         raise ModelBackendError("MODEL_OUTPUT_INVALID")
+                    if kind == "public":
+                        try:
+                            validate_advice_for_view(
+                                request.view, result,
+                                declared_facts=getattr(request, "declared_facts", None))
+                        except ModelContractError as exc:
+                            if self._deliver_danks_failure(ids, exc.code):
+                                continue
+                            raise
+                    else:
+                        result.to_dict()
                     with self._lock:
                         current = (request_identity == self._latest_identity
                                    and request.identity.key == self._latest_key and not self._closed)
-                        deliver = current and time.monotonic() - started <= request_timeout
                         closed = self._closed
-                    if deliver:
+                    if current and time.monotonic() - started <= request_timeout:
                         self.on_result(result)
+                    elif current and self._deliver_danks_failure(ids, "MODEL_TIMEOUT"):
+                        self._terminate()
                     elif not closed:
                         self._notify_status({"event": "stale_advice_dropped", "message": "已丢弃过期推荐"})
                 except queue.Empty:
-                    if not self._stop.is_set():
+                    if not self._stop.is_set() and not self._deliver_danks_failure(ids, "MODEL_TIMEOUT"):
                         self._notify_status({"model_status": "timeout", "error_code": "MODEL_TIMEOUT",
                                         "message": "Model inference timed out."})
                     self._terminate()
                 except Exception as exc:
                     if not self._stop.is_set():
-                        self._notify_status({"model_status": "error", **public_error(exc)})
+                        error = public_error(exc)
+                        exited = (error["error_code"] == "MODEL_WORKER_EXITED"
+                                  or isinstance(exc, BrokenPipeError)
+                                  or (error["error_code"] == "MODEL_UNAVAILABLE"
+                                      and self._process is not None
+                                      and self._process.poll() is not None))
+                        if not exited or not self._deliver_danks_failure(ids, "MODEL_WORKER_EXITED"):
+                            self._notify_status({"model_status": "error", **error})
                     self._terminate()
         finally:
             self._terminate()
@@ -393,6 +468,7 @@ class InferenceClient:
         self._loaded_metadata = {}
         with self._process_lock:
             process, self._process = self._process, None
+            job, self._worker_job = self._worker_job, None
         if process is None:
             return
         try:
@@ -417,6 +493,10 @@ class InferenceClient:
                     process.wait(timeout=0.8)
         except (OSError, subprocess.TimeoutExpired):
             pass
+        finally:
+            if job is not None:
+                # Release descendants before closing pipes they may still hold.
+                job.Close()
         for stream in (process.stdin, process.stdout):
             if stream is not None:
                 try:

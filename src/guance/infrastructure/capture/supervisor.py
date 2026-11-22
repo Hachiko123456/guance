@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from guance.contracts import SourceFrame
+from guance.infrastructure.windows.worker_job import create_worker_job
 from guance.ports.capture import CaptureConfig, FrameHandler, StatusHandler
 
 from .command import build_mitm_command
@@ -65,6 +66,7 @@ class SubprocessCaptureSupervisor:
         self._readiness_probe = readiness_probe
         self._max_line_bytes = max_line_bytes
         self._process: Any | None = None
+        self._job = None
         self._config: CaptureConfig | None = None
         self._on_frame: FrameHandler | None = None
         self._on_status: StatusHandler | None = None
@@ -127,6 +129,13 @@ class SubprocessCaptureSupervisor:
                 raise CaptureStartError(
                     f"unable to start capture helper: {redact_text(str(exc))}"
                 ) from exc
+            if os.name == "nt" and self._process_factory is subprocess.Popen:
+                try:
+                    self._job = create_worker_job(process.pid)
+                except Exception as exc:
+                    process.kill()
+                    process.wait(timeout=config.stop_timeout)
+                    raise CaptureStartError("无法隔离采集助手的进程树。") from exc
             self._process = process
             self._config = config
             self._on_frame = on_frame
@@ -201,6 +210,9 @@ class SubprocessCaptureSupervisor:
         finally:
             with self._lock:
                 if self._process is process:
+                    if self._job is not None:
+                        self._job.Close()
+                        self._job = None
                     self._process = None
                     self._config = None
                     self._on_frame = None

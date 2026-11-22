@@ -8,7 +8,7 @@ from guance.domain.events import (
     ActionEvent, DealEvent, DeclaredActionCommitted, ExchangeInitializationEvent,
     ExchangeResolvedObserved, ExchangeSummaryEvent, InformationalEvent,
     OwnExchangeSelectionObserved, PhaseObserved, PublicResultObserved,
-    ReturnSelectionEvent, SettlementEvent, StartEvent, TributeSelectionEvent,
+    ReturnSelectionEvent, SettlementEvent, SourceMeta, StartEvent, TributeSelectionEvent,
     TributeSummaryEvent,
 )
 from guance.domain.session import GameScopedUnavailable
@@ -47,6 +47,7 @@ _ALLOWED_DEAL_SHAPES = {
     "1:0,2:2,3:0,4:0,5:2,6:2",
     "1:0,2:2,4:0,5:2,6:2",
 }
+_OPENING_INIT_SHAPE = "4:2,4:2,4:2,4:2"
 _ALLOWED_SETTLEMENT_SHAPES = {
     "2:0,3:2,8:0,9:0,10:2,11:2,12:2,13:2,13:2,13:2,13:2,15:2,16:0,17:2,19:2,21:2,21:2,21:2,21:2,22:2,22:2,22:2,22:2",
     "1:0,2:0,3:2,8:0,9:0,10:2,11:2,12:2,13:2,13:2,13:2,13:2,15:2,16:0,17:2,19:2,21:2,21:2,21:2,21:2,22:2,22:2,22:2,22:2",
@@ -60,8 +61,12 @@ class NormalExchangeLiveSubsetProvider:
     protocol_identity = PROTOCOL_IDENTITY
     exchange_identity = NORMAL_EXCHANGE_IDENTITY
 
-    def __init__(self, rules_source_root: str | Path | None = None) -> None:
+    def __init__(self, rules_source_root: str | Path | None = None, *,
+                 allow_danks_opening: bool = False,
+                 strongest_wild_declaration: bool = False) -> None:
         self._rules_source_root = None if not rules_source_root else Path(rules_source_root).resolve()
+        self._allow_danks_opening = allow_danks_opening
+        self._strongest_wild_declaration = strongest_wild_declaration
         self._oracle: VerifiedGuandanRulesOracle | None = None
         self._capture_id = ""
         self._runtime_session_id = ""
@@ -93,6 +98,12 @@ class NormalExchangeLiveSubsetProvider:
         self._cache_game_id: str | None = None
         self._transitions: list[ConfirmedActionTransition] = []
         self._last_decision_key: tuple[object, ...] | None = None
+        self._opening_marker: SourceMeta | None = None
+        self._opening_evidence: EvidenceRef | None = None
+        self._opening_public: CanonicalGuandanPublicState | None = None
+        self._danks_representatives: dict[int, Knowledge] = {}
+        self._danks_pending: tuple[ActionEvent, PublicDeclaration] | None = None
+        self.danks_defer_code = ""
         self._decisions.clear()
 
     def bind_capture(self, capture_id: str) -> None:
@@ -171,6 +182,16 @@ class NormalExchangeLiveSubsetProvider:
         self._decisions.clear()
         return values
 
+    def peek_decisions(self) -> tuple[ConfirmedDecisionInput, ...]:
+        """Read-only view of the decisions queued during the current frame.
+
+        The controller's observation update fires before ``drain_decisions``;
+        the trusted-replay projection needs the matching confirmed public
+        state at submit time without consuming the queue - the MARVEL and
+        canonical consumers drain it afterwards exactly as before.
+        """
+        return tuple(self._decisions)
+
     @property
     def continuous_chain(self) -> ObservedContinuousGameChain | None:
         return self._chain
@@ -179,12 +200,20 @@ class NormalExchangeLiveSubsetProvider:
     def model_adapter_eligible_count(self) -> int:
         return self._model_adapter_eligible_count
 
+    @property
+    def opening_public_state(self) -> CanonicalGuandanPublicState | None:
+        """Latest confirmed ordinary-opening turn for the DanKS public contract."""
+        return self._opening_public if self.decision_session_id else None
+
     def _invalidate(self, code: str, message: str) -> None:
         self._current_invalid = True
         self._eligible = False
         self._history = None
         self._cache = None
         self._last_decision_key = None
+        self._opening_marker = None
+        self._opening_evidence = None
+        self._opening_public = None
         raise GameScopedUnavailable(code, message)
 
     def _rules(self) -> VerifiedGuandanRulesOracle:
@@ -237,6 +266,12 @@ class NormalExchangeLiveSubsetProvider:
         self._cache = None
         self._transitions.clear()
         self._last_decision_key = None
+        self._opening_marker = None
+        self._opening_evidence = None
+        self._opening_public = None
+        self._danks_pending = None
+        self._danks_representatives.clear()
+        self.danks_defer_code = ""
         if self._game_ordinal == 1:
             return
         previous = self._last_settlement
@@ -253,6 +288,70 @@ class NormalExchangeLiveSubsetProvider:
             event.meta.sequence, connection_id,
         )
 
+    def _opening_follows(self, meta: SourceMeta) -> bool:
+        marker = self._opening_marker
+        return (marker is not None and meta.connection_id == marker.connection_id
+                and (meta.sequence, meta.sub_index) > (marker.sequence, marker.sub_index))
+
+    def _observe_opening(self, state: GameState, session_id: str) -> None:
+        evidence = self._opening_evidence
+        if (evidence is None or not self.decision_session_id or state.phase != "active"
+                or state.my_seat not in range(4) or state.current_seat != state.my_seat):
+            self._opening_public = None
+            return
+        if (self._opening_public is not None
+                and self._opening_public.identity.state_version == state.state_version):
+            return
+        base = state.public_state_v2(session_id)
+        actions = tuple(
+            replace(action, cards=representative.value.canonical_cards, declaration=representative)
+            if (representative := self._danks_representatives.get(action.index)) is not None
+            else action for action in base.history.actions
+        )
+        if any(action.declaration.status not in {KnowledgeStatus.KNOWN, KnowledgeStatus.ABSENT}
+               for action in actions):
+            self._opening_public = None
+            return
+        # SessionEngine checked transport continuity and every transition from
+        # the complete deal/init/start boundary. This proof is public only.
+        history = replace(base.history, actions=actions,
+                          public_history_complete=Knowledge.known(True, evidence),
+                          transport_contiguous=Knowledge.known(True, evidence))
+        reasons = {base.history.public_history_complete.reason, base.history.transport_contiguous.reason}
+        winning = base.current_winning
+        representative = self._danks_winning(state)
+        if representative is not None and winning.status is KnowledgeStatus.KNOWN:
+            value = winning.value
+            winning = Knowledge.known(
+                CurrentWinning(value.actor, representative.value.canonical_cards, representative),
+                winning.evidence,
+            )
+        self._opening_public = replace(
+            base, history=history, current_winning=winning,
+            unsupported_reasons=tuple(reason for reason in base.unsupported_reasons if reason not in reasons),
+        )
+
+    def _danks_winning(self, state: GameState) -> Knowledge | None:
+        if state.lead_action is None or not self._danks_representatives:
+            return None
+        offset = len(state.committed_actions_v2) - len(state.history)
+        return self._danks_representatives.get(offset + state.lead_action.index)
+
+    @staticmethod
+    def _danks_key(declaration: PublicDeclaration) -> tuple:
+        # These fields determine comparison, target card order and DanKS
+        # history encoding. MARVEL also encodes the wild assignments.
+        return (declaration.family, declaration.declared_ranks, declaration.comparison_rank,
+                declaration.suit, declaration.length, declaration.protocol_length,
+                declaration.canonical_cards, declaration.canonical_action_cards)
+
+    def _retire_exact_history(self) -> None:
+        self._eligible = False
+        self._history = None
+        self._cache = None
+        self._last_decision_key = None
+        self._decisions.clear()
+
     def adapt_event(self, event: object, state: GameState | None,
                     session_id: str) -> Iterable[object]:
         if isinstance(event, (DealEvent, StartEvent, ActionEvent, SettlementEvent,
@@ -264,6 +363,8 @@ class NormalExchangeLiveSubsetProvider:
             if event.meta.group_shape not in _ALLOWED_DEAL_SHAPES:
                 self._invalidate("LIVE_PROTOCOL_VARIANT_UNSUPPORTED", "unsupported deal shape")
             self._start_game(event, state)
+            if self._allow_danks_opening and self._candidate_previous is None:
+                self._opening_marker = event.meta
             return (event,)
         if isinstance(event, ExchangeInitializationEvent):
             if state is None or state.phase != "waiting_start" or self._stage != "none":
@@ -272,6 +373,10 @@ class NormalExchangeLiveSubsetProvider:
             if self._candidate_previous is not None:
                 self._rules()
                 self._eligible = True
+            if self._opening_follows(event.meta) and event.meta.group_shape == _OPENING_INIT_SHAPE:
+                self._opening_marker = event.meta
+            else:
+                self._opening_marker = None
             return ()
         if isinstance(event, TributeSelectionEvent):
             if not self._eligible or self._candidate_previous is None:
@@ -396,29 +501,59 @@ class NormalExchangeLiveSubsetProvider:
             if self._candidate_previous is not None and self._stage != "complete":
                 self._invalidate("LIVE_EXCHANGE_VARIANT_UNSUPPORTED",
                                  "ANTI_TRIBUTE_OR_UNKNOWN_EXCHANGE_UNSUPPORTED")
+            if (self._stage == "initialized" and self._opening_follows(event.meta)
+                    and event.first_seat_present and state is not None and state.phase == "waiting_start"
+                    and len(state.initial_hand) == 27 and tuple(state.remaining) == (27, 27, 27, 27)):
+                try:
+                    self._rules()
+                except GameScopedUnavailable:
+                    return (event,)
+                self._opening_evidence = source_evidence(
+                    event.meta, "semantic.danks_opening", "confirmed_deal_start_chain")
+            if (self._allow_danks_opening and self._stage == "complete" and self._eligible
+                    and event.first_seat_present and state is not None):
+                self._opening_evidence = source_evidence(
+                    event.meta, "semantic.danks_opening", "confirmed_exchange_start_chain")
+            self._opening_marker = None
             return (event,)
         if isinstance(event, ActionEvent) and event.kind == "play":
             if state is None:
                 self._invalidate("LIVE_STATE_UNAVAILABLE", "play before deal")
-            if not self._eligible:
+            if not self._eligible and self._opening_evidence is None:
                 return (event,)
             current = None
             if state.current_winning_declaration is not None:
-                meaning = state.current_winning_declaration
+                meaning = self._danks_winning(state) or state.current_winning_declaration
                 if meaning.status is KnowledgeStatus.KNOWN:
                     current = meaning.value
-                elif self._eligible:
-                    self._invalidate("LIVE_DECLARATION_AMBIGUOUS", "current declaration unavailable")
+                else:
+                    return self._withhold_play(event, "LIVE_DECLARATION_AMBIGUOUS")
             try:
-                declaration = self._rules().validate_observed_play(
+                declarations = self._rules().observed_play_declarations(
                     event.cards, wire_level=state.level, combo_type=int(event.combo_type or 0),
-                    current=current,
+                    current=current, strongest_only=self._strongest_wild_declaration,
                 )
             except RulesOracleError as exc:
-                if self._eligible:
-                    self._invalidate(exc.code, "live declaration ambiguous")
+                return self._withhold_play(event, exc.code)
+            if len(declarations) == 1:
+                return (DeclaredActionCommitted(event, declarations[0]),)
+            if (self._opening_evidence is not None
+                    and len({self._danks_key(value) for value in declarations}) == 1):
+                self._retire_exact_history()
+                canonical = min(declarations, key=lambda value: sum(
+                    assignment.substituted for assignment in value.wild_assignments))
+                self._danks_pending = (event, canonical)
                 return (event,)
-            return (DeclaredActionCommitted(event, declaration),)
+            return self._withhold_play(event, "LIVE_DECLARATION_AMBIGUOUS")
+        return (event,)
+
+    def _withhold_play(self, event: ActionEvent, code: str) -> tuple[ActionEvent]:
+        if self._eligible and self._opening_evidence is None:
+            self._invalidate(code, "live declaration unavailable")
+        self._retire_exact_history()
+        self._opening_evidence = None
+        self._opening_public = None
+        self.danks_defer_code = code
         return (event,)
 
     def _build_exchange_history(self, state: GameState,
@@ -470,6 +605,14 @@ class NormalExchangeLiveSubsetProvider:
                 for index, next_actor in enumerate(next_actors)]
 
     def observe_applied(self, event: object, state: GameState, session_id: str) -> None:
+        if self._danks_pending is not None and self._danks_pending[0] is event:
+            _, representative = self._danks_pending
+            self._danks_pending = None
+            action = state.committed_actions_v2[-1]
+            evidence = source_evidence(event.meta, "semantic.danks_declaration", "equivalent_public_play")
+            self._danks_representatives[action.index] = Knowledge.known(representative, evidence)
+        if self._opening_evidence is not None and not self._eligible:
+            self._observe_opening(state, session_id)
         if isinstance(event, SettlementEvent):
             if event.meta.group_shape not in _ALLOWED_SETTLEMENT_SHAPES or len(event.remaining_hands) != 4:
                 self._current_invalid = True
